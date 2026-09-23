@@ -50,13 +50,20 @@
 <body>
   <header>
     <span class="badge">₿ btcsim</span>
-    <h1>Simulador de Carteira Bitcoin — dinheiro virtual</h1>
+    <h1>Simulador de Carteira de Cripto — dinheiro virtual</h1>
   </header>
 
   <div class="wrap">
     <aside class="panel">
       <label for="capital">Capital inicial</label>
       <input id="capital" type="number" value="10000" min="1" step="100" />
+
+      <label for="coin">Criptomoeda</label>
+      <select id="coin">
+        {% for c in coins %}
+        <option value="{{ c }}" {% if c == 'bitcoin' %}selected{% endif %}>{{ c|capitalize }}</option>
+        {% endfor %}
+      </select>
 
       <label for="currency">Moeda</label>
       <select id="currency">
@@ -81,13 +88,20 @@
         {% endfor %}
       </div>
 
-      <label class="chip" style="margin-top:12px;">
-        <input type="checkbox" id="news" /> Usar notícias de exemplo (sentimento)
+      <label for="news">Fonte de sentimento (notícias)</label>
+      <select id="news">
+        <option value="none" selected>Nenhuma (neutro)</option>
+        <option value="feargreed">Fear &amp; Greed (mercado, real)</option>
+        <option value="sample">Notícias de exemplo (keyword)</option>
+      </select>
+
+      <label class="chip" style="margin-top:10px;">
+        <input type="checkbox" id="contrarian" checked /> Modo contrário (comprar no medo / vender na ganância)
       </label>
 
       <button id="run">▶ Simular</button>
       <p class="muted" style="margin-top:14px;">Dados reais via CoinGecko (em cache).
-        A estratégia <b>sentiment</b> só atua com uma fonte de notícias ligada.</p>
+        A estratégia <b>sentiment</b> só atua com uma fonte de sentimento ligada.</p>
     </aside>
 
     <main>
@@ -129,7 +143,9 @@ async function run() {
   params.set('currency', $('currency').value);
   params.set('days', $('days').value);
   params.set('fee', (parseFloat($('fee').value)/100).toString());
-  params.set('news', $('news').checked ? 'true':'false');
+  params.set('coin', $('coin').value);
+  params.set('news', $('news').value);
+  params.set('contrarian', $('contrarian').checked ? 'true':'false');
   selectedStrategies().forEach(s => params.append('strategy', s));
 
   try {
@@ -146,12 +162,13 @@ async function run() {
 
 function render(d) {
   const cur = d.currency;
+  const asset = d.asset_label || 'BTC';
   const traces = [];
   for (const [name, vals] of Object.entries(d.curves)) {
     traces.push({ x: d.dates, y: vals, name, mode: 'lines',
       line: { width: 2, color: COLORS[name] || undefined } });
   }
-  traces.push({ x: d.dates, y: d.price, name: 'Preço BTC', yaxis: 'y2',
+  traces.push({ x: d.dates, y: d.price, name: 'Preço ' + asset, yaxis: 'y2',
     mode: 'lines', line: { width: 1, color: '#f7931a', dash: 'dot' }, opacity: .5 });
 
   const layout = {
@@ -161,7 +178,7 @@ function render(d) {
     legend: { orientation: 'h', y: 1.12 },
     xaxis: { gridcolor: '#2a3a4b' },
     yaxis: { title: 'Valor carteira ('+cur+')', gridcolor: '#2a3a4b' },
-    yaxis2: { title: 'BTC ('+cur+')', overlaying: 'y', side: 'right', showgrid: false },
+    yaxis2: { title: asset+' ('+cur+')', overlaying: 'y', side: 'right', showgrid: false },
   };
   Plotly.newPlot('chart', traces, layout, {responsive: true, displayModeBar: false});
 
@@ -197,7 +214,7 @@ function render(d) {
     const items = ts.slice(-6).reverse().map(t =>
       `<tr><td>${t.date}</td><td class="${t.side==='BUY'?'pos':'neg'}">${t.side}</td>
        <td>${fmtMoney(t.price, cur)}</td><td>${t.units}</td><td style="text-align:left">${t.reason}</td></tr>`).join('');
-    return `<h3>${n}</h3><table><thead><tr><th>Data</th><th>Ação</th><th>Preço</th><th>BTC</th>
+    return `<h3>${n}</h3><table><thead><tr><th>Data</th><th>Ação</th><th>Preço</th><th>Unid.</th>
             <th style="text-align:left">Motivo</th></tr></thead><tbody>${items}</tbody></table>`;
   }).join('');
   $('tradesWrap').innerHTML = th || '<p class="muted">Sem trades neste cenário.</p>';

@@ -19,10 +19,16 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
 from . import data as data_mod
-from .news import KeywordSentimentProvider, NeutralProvider
+from .news import (
+    FearGreedProvider,
+    KeywordSentimentProvider,
+    NeutralProvider,
+)
 from .report import DISCLAIMER
 from .simulator import Simulator
 from .strategies import STRATEGY_REGISTRY, build_strategy
+
+COINS = ["bitcoin", "ethereum", "solana", "cardano", "dogecoin", "binancecoin"]
 
 app = Flask(__name__)
 
@@ -30,28 +36,36 @@ DEFAULT_STRATEGIES = ["buy_and_hold", "dca", "ma_crossover", "rsi"]
 SAMPLE_NEWS = Path(__file__).resolve().parent.parent / "examples" / "sample_news.csv"
 
 
-def _make_strategy(name: str):
+def _make_strategy(name: str, contrarian: bool = False):
     """Build a strategy with sensible dashboard defaults."""
     defaults = {
         "dca": dict(every_days=7),
         "ma_crossover": dict(short=20, long=50),
         "rsi": dict(window=14, low=30.0, high=70.0),
-        "sentiment": dict(threshold=0.2),
+        "sentiment": dict(threshold=0.4, contrarian=contrarian),
     }
     return build_strategy(name, **defaults.get(name, {}))
 
 
-def _run(capital: float, currency: str, days: int, fee: float,
-         strategy_names: list[str], use_news: bool) -> dict:
-    series = data_mod.fetch(days=days, currency=currency)
+def _make_provider(news_source: str):
+    """Select a sentiment provider from the dashboard 'news' option."""
+    if news_source == "feargreed":
+        return FearGreedProvider()
+    if news_source == "sample" and SAMPLE_NEWS.exists():
+        return KeywordSentimentProvider.from_csv(str(SAMPLE_NEWS))
+    return NeutralProvider()
 
-    provider = NeutralProvider()
-    if use_news and SAMPLE_NEWS.exists():
-        provider = KeywordSentimentProvider.from_csv(str(SAMPLE_NEWS))
+
+def _run(capital: float, currency: str, days: int, fee: float,
+         strategy_names: list[str], news_source: str, contrarian: bool,
+         coin: str) -> dict:
+    series = data_mod.fetch(days=days, currency=currency, coin=coin)
+
+    provider = _make_provider(news_source)
 
     sim = Simulator(series, initial_cash=capital, fee_rate=fee,
                     sentiment_provider=provider)
-    results = sim.compare([_make_strategy(n) for n in strategy_names])
+    results = sim.compare([_make_strategy(n, contrarian) for n in strategy_names])
 
     dates = [d.strftime("%Y-%m-%d") for d in series.frame.index]
     curves = {name: [round(float(v), 2) for v in r.equity_curve.values]
@@ -96,6 +110,9 @@ def _run(capital: float, currency: str, days: int, fee: float,
         "trades": trades,
         "currency": currency.upper(),
         "capital": capital,
+        "coin": coin,
+        "asset_label": data_mod.ticker_for(coin),
+        "news_source": news_source,
         "period": {"start": dates[0], "end": dates[-1], "days": len(dates)},
         "disclaimer": DISCLAIMER,
     }
@@ -107,6 +124,7 @@ def index():
         "dashboard.html",
         strategies=sorted(STRATEGY_REGISTRY),
         default_strategies=DEFAULT_STRATEGIES,
+        coins=COINS,
         disclaimer=DISCLAIMER,
     )
 
@@ -118,10 +136,13 @@ def api_simulate():
         currency = request.args.get("currency", "eur").lower()
         days = int(request.args.get("days", 365))
         fee = float(request.args.get("fee", 0.001))
-        use_news = request.args.get("news", "false").lower() == "true"
+        coin = request.args.get("coin", "bitcoin").lower().strip() or "bitcoin"
+        news_source = request.args.get("news", "none").lower()
+        contrarian = request.args.get("contrarian", "false").lower() == "true"
         names = request.args.getlist("strategy") or DEFAULT_STRATEGIES
         names = [n for n in names if n in STRATEGY_REGISTRY]
-        payload = _run(capital, currency, days, fee, names, use_news)
+        payload = _run(capital, currency, days, fee, names,
+                       news_source, contrarian, coin)
         return jsonify(payload)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
