@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from . import allocation as alloc_mod
 from . import data as data_mod
@@ -43,6 +44,30 @@ STOCKS = [
 app = Flask(__name__)
 
 DEFAULT_STRATEGIES = ["buy_and_hold", "dca", "ma_crossover", "rsi"]
+
+
+@app.before_request
+def _optional_basic_auth():
+    """Protect the dashboard when DASHBOARD_PASSWORD is set (recommended on a server)."""
+    if request.path == "/health":
+        return None
+    password = os.environ.get("DASHBOARD_PASSWORD", "")
+    if not password:
+        return None
+    user = os.environ.get("DASHBOARD_USER", "btcsim")
+    auth = request.authorization
+    if auth and auth.username == user and auth.password == password:
+        return None
+    return Response(
+        "Autenticacao necessaria",
+        401,
+        {"WWW-Authenticate": 'Basic realm="btcsim"'},
+    )
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 SAMPLE_NEWS = Path(__file__).resolve().parent.parent / "examples" / "sample_news.csv"
 
 
