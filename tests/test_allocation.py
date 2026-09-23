@@ -76,3 +76,28 @@ def test_backtest_rebalancing_incurs_fees(two_asset_prices):
     bt = A.backtest(two_asset_prices, {"coin_a": 0.5, "coin_b": 0.5},
                     initial_cash=10_000.0, fee_rate=0.001, rebalance_days=10)
     assert bt.total_fees > 0
+
+
+@pytest.fixture
+def long_two_asset_prices():
+    idx = pd.date_range("2023-01-01", periods=300, freq="D")
+    t = np.arange(len(idx))
+    a = 100.0 + t * 0.2
+    b = 100.0 + 25.0 * np.sin(t / 6.0) + t * 0.15
+    return pd.DataFrame({"coin_a": a, "coin_b": b}, index=idx)
+
+
+def test_walk_forward_produces_oos_curve(long_two_asset_prices):
+    wf = A.walk_forward(long_two_asset_prices, method="min_variance",
+                        train_days=120, test_days=30, n_samples=2000)
+    assert len(wf.segments) >= 1
+    assert len(wf.oos_equity) > 0
+    assert len(wf.equal_equity) == len(wf.oos_equity)
+    # OOS window starts after the first training window.
+    assert wf.oos_equity.index[0] >= long_two_asset_prices.index[120]
+    assert wf.metrics.end_value > 0
+
+
+def test_walk_forward_needs_enough_data(two_asset_prices):
+    with pytest.raises(ValueError):
+        A.walk_forward(two_asset_prices, train_days=180, test_days=60)

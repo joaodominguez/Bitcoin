@@ -87,3 +87,36 @@ def test_fetch_asset_dispatch_stock(tmp_path):
 def test_fetch_asset_unknown_type_raises():
     with pytest.raises(ValueError):
         d.fetch_asset("forex:EURUSD")
+
+
+# ---- FX conversion ----
+
+def _fx_payload(base, quote, dates, rates):
+    return {
+        "amount": 1.0,
+        "base": base,
+        "rates": {
+            pd.Timestamp(x).strftime("%Y-%m-%d"): {quote: r}
+            for x, r in zip(dates, rates)
+        },
+    }
+
+
+def test_fetch_fx_identity_returns_none():
+    assert d.fetch_fx("USD", "USD") is None
+
+
+def test_fetch_fx_parses_rates(tmp_path):
+    dates = pd.date_range("2024-01-01", periods=4, freq="D")
+    sess = _FakeSession(_fx_payload("USD", "EUR", dates, [0.9, 0.91, 0.92, 0.93]))
+    fx = d.fetch_fx("USD", "EUR", days=30, cache_dir=tmp_path, session=sess)
+    assert float(fx.iloc[-1]) == pytest.approx(0.93)
+    assert (fx > 0).all()
+
+
+def test_convert_frame_applies_rate():
+    idx = pd.date_range("2024-01-01", periods=3, freq="D")
+    frame = pd.DataFrame({"price": [100.0, 200.0, 300.0]}, index=idx)
+    rate = pd.Series([0.5, 0.5, 0.5], index=idx)
+    out = d._convert_frame(frame, rate)
+    assert list(out["price"]) == [50.0, 100.0, 150.0]
