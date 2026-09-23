@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from . import allocation as alloc_mod
 from . import data as data_mod
 from . import report as report_mod
 from .news import (
@@ -49,6 +50,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Estrategia a simular (default: dca).",
     )
     p.add_argument("--compare", action="store_true", help="Comparar todas as estrategias.")
+
+    # Allocation mode (split capital across several cryptos).
+    p.add_argument(
+        "--allocate",
+        action="store_true",
+        help="Repartir o capital por varias criptos da melhor forma (otimizacao de carteira).",
+    )
+    p.add_argument(
+        "--coins",
+        default="bitcoin,ethereum,solana",
+        help="[allocate] Lista de criptos separada por virgulas.",
+    )
+    p.add_argument(
+        "--method",
+        choices=list(alloc_mod.ALLOCATION_METHODS),
+        default="max_sharpe",
+        help="[allocate] Metodo de alocacao (default: max_sharpe).",
+    )
+    p.add_argument(
+        "--rebalance-days",
+        type=int,
+        default=30,
+        help="[allocate] Cadencia de rebalanceamento em dias (0 = sem rebalanceamento).",
+    )
+    p.add_argument(
+        "--samples",
+        type=int,
+        default=20_000,
+        help="[allocate] Amostras Monte Carlo para max_sharpe/min_variance.",
+    )
 
     # Strategy parameters.
     p.add_argument("--amount", type=float, help="[dca] Valor por compra (default: reparte o capital).")
@@ -107,8 +138,53 @@ def _make_sentiment_provider(args):
     return NeutralProvider()
 
 
+def _run_allocation(args) -> int:
+    coins = [c.strip() for c in args.coins.split(",") if c.strip()]
+    if len(coins) < 2:
+        raise SystemExit("--allocate requer pelo menos 2 criptos em --coins")
+
+    print(report_mod.DISCLAIMER)
+    print()
+    print(f"A carregar dados de: {', '.join(coins)} ...")
+
+    prices = alloc_mod.load_prices(coins, currency=args.currency, days=args.days)
+    returns = alloc_mod.daily_returns(prices)
+
+    result = alloc_mod.optimize(
+        coins, returns, method=args.method, n_samples=args.samples
+    )
+    bt = alloc_mod.backtest(
+        prices, result.weights, initial_cash=args.capital,
+        fee_rate=args.fee, rebalance_days=args.rebalance_days,
+    )
+    equal = alloc_mod.optimize(coins, returns, method="equal")
+    equal_bt = alloc_mod.backtest(
+        prices, equal.weights, initial_cash=args.capital,
+        fee_rate=args.fee, rebalance_days=args.rebalance_days,
+    )
+
+    print()
+    print(report_mod.allocation_text_report(
+        result, bt, currency=args.currency, initial_cash=args.capital
+    ))
+    print()
+    print(f"(Referencia peso-igual: valor final "
+          f"{equal_bt.end_value:,.2f} {args.currency.upper()}, "
+          f"retorno {equal_bt.total_return_pct:+.2f}%)")
+
+    if args.chart:
+        path = report_mod.save_allocation_chart(
+            result, bt, args.chart, currency=args.currency, equal_backtest=equal_bt,
+        )
+        print(f"\nGrafico guardado em: {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    if args.allocate:
+        return _run_allocation(args)
 
     if args.csv:
         series = data_mod.load_csv(args.csv, coin=args.coin, currency=args.currency)
