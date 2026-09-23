@@ -75,6 +75,27 @@ Na dashboard podes, sem tocar em código:
 
 Opções: `--host 0.0.0.0 --port 8080` (útil se quiseres aceder de outra máquina).
 
+## Correr 24 horas no teu servidor
+
+Faz sentido se queres a página **sempre disponível** (telemóvel, portátil, a qualquer hora). O processo fica ligado e responde quando abres o site. As simulações correm quando carregas em **Simular** — não há um robô a comprar ou a vender sozinho. Em repouso usa pouca memória e quase nenhum CPU.
+
+Não preciso de acesso ao servidor. No teu lado, com Docker instalado:
+
+```bash
+git clone https://github.com/joaodominguez/Bitcoin.git
+cd Bitcoin
+git checkout cursor/bitcoin-portfolio-simulator-a499
+cp .env.example .env
+# edita .env e mete uma password
+docker compose up -d --build
+```
+
+A dashboard fica em `http://IP-DO-SERVIDOR:8000`. O contentor reinicia sozinho se o servidor reiniciar (`restart: unless-stopped`).
+
+- Define `DASHBOARD_PASSWORD` no `.env`. Sem password, qualquer pessoa que chegue à porta consegue usar a ferramenta e gastar o teu tráfego nas APIs de preços.
+- O servidor precisa de saída HTTPS (CoinGecko, Yahoo Finance e câmbio). Cerca de 512 MB de RAM chegam.
+- Para um endereço com HTTPS (ex.: `https://carteira.oteudominio.pt`), põe o Nginx ou o Caddy que já tenhas à frente da porta 8000. Não abras a porta 8000 diretamente à internet se puderes evitar.
+
 ![Dashboard](docs/dashboard.png)
 
 ## Ações e carteiras mistas (cripto + ações)
