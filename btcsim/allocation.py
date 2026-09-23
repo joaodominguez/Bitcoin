@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from . import data as data_mod
+from . import metrics as metrics_mod
 
 TRADING_DAYS = 365
 ALLOCATION_METHODS = ("equal", "inverse_vol", "max_sharpe", "min_variance")
@@ -270,4 +271,91 @@ def backtest(
         max_drawdown_pct=round(max_dd, 2),
         total_fees=round(total_fees, 2),
         rebalance_days=rebalance_days,
+    )
+
+
+@dataclass
+class WalkForwardResult:
+    method: str
+    oos_equity: pd.Series          # out-of-sample equity curve of the strategy
+    equal_equity: pd.Series        # equal-weight benchmark over the same window
+    segments: list[dict]           # per-window {start, end, weights}
+    metrics: "metrics_mod.Metrics"
+    equal_metrics: "metrics_mod.Metrics"
+    train_days: int
+    test_days: int
+
+
+def walk_forward(
+    prices: pd.DataFrame,
+    method: str = "max_sharpe",
+    train_days: int = 180,
+    test_days: int = 30,
+    rebalance_days: int = 30,
+    initial_cash: float = 10_000.0,
+    fee_rate: float = 0.001,
+    n_samples: int = 15_000,
+) -> WalkForwardResult:
+    """Out-of-sample validation: optimise on a training window, then apply the
+    weights to the *next* (unseen) window, roll forward, and chain the results.
+
+    This is the honest way to judge an allocation method: it never optimises on
+    the data it is then scored on, so it exposes overfitting that a single
+    full-history optimisation would hide. Compared against an equal-weight
+    benchmark over the same out-of-sample period.
+    """
+    names = list(prices.columns)
+    n = len(prices)
+    if n <= train_days + test_days:
+        raise ValueError(
+            "Not enough data for walk-forward: need more than "
+            f"train_days + test_days ({train_days + test_days}) rows, got {n}."
+        )
+
+    oos_segments: list[pd.Series] = []
+    equal_segments: list[pd.Series] = []
+    segments: list[dict] = []
+
+    equity = initial_cash
+    equal_equity = initial_cash
+    pos = train_days
+    while pos < n:
+        train = prices.iloc[max(0, pos - train_days):pos]
+        test = prices.iloc[pos:pos + test_days]
+        if len(test) < 2:
+            break
+        returns_train = daily_returns(train)
+        result = optimize(names, returns_train, method=method, n_samples=n_samples)
+        bt = backtest(test, result.weights, initial_cash=equity,
+                      fee_rate=fee_rate, rebalance_days=rebalance_days)
+        oos_segments.append(bt.equity_curve)
+        equity = bt.end_value
+
+        eq_bt = backtest(test, {c: 1.0 / len(names) for c in names},
+                         initial_cash=equal_equity, fee_rate=fee_rate,
+                         rebalance_days=rebalance_days)
+        equal_segments.append(eq_bt.equity_curve)
+        equal_equity = eq_bt.end_value
+
+        segments.append({
+            "start": str(test.index[0].date()),
+            "end": str(test.index[-1].date()),
+            "weights": {k: round(v, 4) for k, v in result.weights.items()},
+        })
+        pos += test_days
+
+    oos = pd.concat(oos_segments)
+    oos = oos[~oos.index.duplicated(keep="last")]
+    equal = pd.concat(equal_segments)
+    equal = equal[~equal.index.duplicated(keep="last")]
+
+    return WalkForwardResult(
+        method=method,
+        oos_equity=oos,
+        equal_equity=equal,
+        segments=segments,
+        metrics=metrics_mod.compute(oos),
+        equal_metrics=metrics_mod.compute(equal),
+        train_days=train_days,
+        test_days=test_days,
     )

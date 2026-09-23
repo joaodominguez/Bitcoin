@@ -158,6 +158,63 @@ def allocation_text_report(
     return "\n".join(lines)
 
 
+def walk_forward_text_report(wf, currency: str = "eur") -> str:
+    """Text summary for a walk-forward (out-of-sample) validation."""
+    m, em = wf.metrics, wf.equal_metrics
+    lines = []
+    lines.append("=" * 60)
+    lines.append(f"Validação walk-forward (out-of-sample) — {wf.method}")
+    lines.append("=" * 60)
+    lines.append(
+        f"Treino: {wf.train_days} dias | Teste: {wf.test_days} dias | "
+        f"{len(wf.segments)} janelas fora da amostra"
+    )
+    lines.append("-" * 60)
+    lines.append(f"{'':20}{'estrategia':>14}{'peso igual':>14}")
+    lines.append(f"{'Valor final':20}{_fmt_money(m.end_value, currency):>14}{_fmt_money(em.end_value, currency):>14}")
+    lines.append(f"{'Retorno total':20}{m.total_return_pct:>13.2f}%{em.total_return_pct:>13.2f}%")
+    lines.append(f"{'Max drawdown':20}{m.max_drawdown_pct:>13.2f}%{em.max_drawdown_pct:>13.2f}%")
+    lines.append(f"{'Sharpe':20}{m.sharpe:>14.2f}{em.sharpe:>14.2f}")
+    lines.append("-" * 60)
+    verdict = "BATEU" if m.end_value >= em.end_value else "NAO bateu"
+    lines.append(f"Veredito: a estrategia {verdict} o peso-igual fora da amostra.")
+    lines.append("(Out-of-sample = os pesos nunca viram os dados em que sao avaliados.)")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+def save_walk_forward_chart(
+    wf, path: str | Path, currency: str = "eur",
+    title: str = "Walk-forward (out-of-sample)",
+) -> Path:
+    """Chart of the out-of-sample equity curve vs the equal-weight benchmark."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.plot(wf.oos_equity.index, wf.oos_equity.values,
+            color="#2ecc71", linewidth=1.8, label=f"{wf.method} (out-of-sample)")
+    ax.plot(wf.equal_equity.index, wf.equal_equity.values,
+            color="#95a5a6", linewidth=1.3, linestyle="--", label="peso igual")
+    for seg in wf.segments:
+        ax.axvline(pd.Timestamp(seg["start"]), color="#2a3a4b", alpha=0.25, linewidth=0.8)
+    ax.set_title(f"{title} — {wf.method}\n(treino {wf.train_days}d / teste {wf.test_days}d)")
+    ax.set_ylabel(f"Valor da carteira ({currency.upper()})")
+    ax.legend(loc="upper left", fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    fig.text(0.5, 0.005, DISCLAIMER, ha="center", fontsize=7, style="italic")
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
 def save_allocation_chart(
     result,
     backtest,
