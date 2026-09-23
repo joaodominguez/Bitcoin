@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Simulator artifacts
+.cache/
+output/
+*.png
+!docs/*.png
+
+# OS
+.DS_Store
