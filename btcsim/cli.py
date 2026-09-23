@@ -80,6 +80,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=20_000,
         help="[allocate] Amostras Monte Carlo para max_sharpe/min_variance.",
     )
+    p.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="[allocate] Validacao out-of-sample: otimiza no treino, avalia no teste.",
+    )
+    p.add_argument("--train-days", type=int, default=180, help="[walk-forward] Janela de treino.")
+    p.add_argument("--test-days", type=int, default=30, help="[walk-forward] Janela de teste.")
 
     # Strategy parameters.
     p.add_argument("--amount", type=float, help="[dca] Valor por compra (default: reparte o capital).")
@@ -150,6 +157,19 @@ def _run_allocation(args) -> int:
     prices = alloc_mod.load_prices(coins, currency=args.currency, days=args.days)
     returns = alloc_mod.daily_returns(prices)
     names = list(prices.columns)
+
+    if args.walk_forward:
+        wf = alloc_mod.walk_forward(
+            prices, method=args.method, train_days=args.train_days,
+            test_days=args.test_days, rebalance_days=args.rebalance_days,
+            initial_cash=args.capital, fee_rate=args.fee, n_samples=args.samples,
+        )
+        print()
+        print(report_mod.walk_forward_text_report(wf, currency=args.currency))
+        if args.chart:
+            path = report_mod.save_walk_forward_chart(wf, args.chart, currency=args.currency)
+            print(f"\nGrafico guardado em: {path}")
+        return 0
 
     result = alloc_mod.optimize(
         names, returns, method=args.method, n_samples=args.samples
