@@ -6,21 +6,22 @@
 > dinheiro que estejas disposto a perder e, para decisões reais, fala com um
 > profissional certificado.
 
-`btcsim` simula a gestão de uma carteira de criptomoeda (por defeito **Bitcoin**,
-mas funciona com **qualquer cripto** — Ethereum, Solana, etc.) com **10 000 €**,
-testando várias estratégias de compra/venda sobre **dados históricos reais** e
-mostrando qual teria tido melhor desempenho — com métricas de risco e um gráfico.
+`btcsim` simula a gestão de uma carteira de **criptomoedas e/ou ações** com
+**10 000 €**, testando várias estratégias de compra/venda sobre **dados históricos
+reais** e mostrando qual teria tido melhor desempenho — com métricas de risco e um
+gráfico. Suporta **qualquer cripto** (Bitcoin, Ethereum, Solana, ...) e **ações/ETFs**
+(Apple, Microsoft, S&P 500, ...), inclusive **misturadas** na mesma carteira.
 
 A ideia central: em vez de tentar "adivinhar" quando comprar e vender, defines uma
 **estratégia com regras**, e o simulador mostra-te como ela se teria comportado.
 
 ## Funcionalidades
 
-- **Qualquer cripto** via `--coin` (ids da CoinGecko: `bitcoin`, `ethereum`,
-  `solana`, ...).
-- **Dados reais** do preço via API pública da CoinGecko (até 365 dias,
-  o limite do plano gratuito) com cache em disco. Podes também usar o teu próprio
-  CSV para históricos mais longos.
+- **Cripto e ações**, via *asset specs*:
+  - cripto (CoinGecko): `bitcoin`, `ethereum`, `solana`, ... (ou `crypto:bitcoin`);
+  - ações/ETFs/índices (Yahoo Finance): `stock:AAPL`, `stock:MSFT`, `stock:SPY`, ...
+- **Dados reais**, gratuitos e sem chave: CoinGecko (cripto, até 365 dias) e
+  Yahoo Finance (ações, histórico longo), com cache em disco. Também aceita CSV próprio.
 - **Intervalo de análise:** **diário** (1 preço de fecho por dia). É a granularidade
   usada para todos os cálculos e sinais; para *backtesting* é a mais robusta.
 - **Estratégias incluídas:**
@@ -57,7 +58,7 @@ python3 -m btcsim.dashboard
 
 Na dashboard podes, sem tocar em código:
 
-- escolher a **criptomoeda** (Bitcoin, Ethereum, Solana, ...);
+- escolher o **ativo**: cripto (Bitcoin, Ethereum, ...) ou **ação/ETF** (Apple, S&P 500, ...);
 - definir o **capital inicial** (ex.: 10 000 €), a **moeda** e o **período**;
 - escolher que **estratégias** comparar (checkboxes);
 - escolher a **fonte de sentimento**: nenhuma, **Fear & Greed** (real, do mercado)
@@ -70,6 +71,38 @@ Na dashboard podes, sem tocar em código:
 Opções: `--host 0.0.0.0 --port 8080` (útil se quiseres aceder de outra máquina).
 
 ![Dashboard](docs/dashboard.png)
+
+## Ações e carteiras mistas (cripto + ações)
+
+Além de cripto, podes simular **ações, ETFs e índices** (via Yahoo Finance) usando o
+prefixo `stock:`:
+
+```bash
+# Uma ação, comparando estratégias
+python3 -m btcsim --coin stock:AAPL --compare
+
+# Índice S&P 500 (ETF SPY)
+python3 -m btcsim --coin stock:SPY --strategy dca
+```
+
+E podes **misturar cripto e ações na mesma carteira otimizada** — muitas vezes o
+melhor perfil de risco vem de diversificar entre classes de ativos:
+
+```bash
+python3 -m btcsim --allocate \
+    --coins "bitcoin,ethereum,stock:AAPL,stock:MSFT,stock:SPY" \
+    --method min_variance --rebalance-days 30 --chart output/mix.png
+```
+
+Na **dashboard**, o separador de estratégias tem um seletor com secções *Cripto* e
+*Ações*, e no separador de alocação basta escrever os ativos separados por vírgula
+(ex.: `bitcoin,ethereum,stock:AAPL,stock:SPY`):
+
+![Alocação mista](docs/allocation_mixed.png)
+
+> Nota: os preços de ações vêm na sua moeda nativa (normalmente USD). Ao misturar
+> ativos de moedas diferentes numa só carteira, os valores são somados nominalmente
+> — suficiente para fins educativos, mas não é uma conversão cambial exata.
 
 ## Repartir o capital por várias criptos (alocação / diversificação)
 
@@ -228,7 +261,7 @@ python3 -m pytest -q
 
 ```
 btcsim/
-  data.py         # obtenção/cache de dados de preço
+  data.py         # dados de preço: cripto (CoinGecko) + ações (Yahoo) + specs
   indicators.py   # SMA, EMA, RSI, MACD
   portfolio.py    # estado da carteira (cash + BTC, trades, comissões)
   strategies.py   # estratégias de compra/venda
