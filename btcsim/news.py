@@ -95,6 +95,79 @@ class KeywordSentimentProvider(SentimentProvider):
         return series
 
 
+class FearGreedProvider(SentimentProvider):
+    """Crypto Fear & Greed Index from alternative.me (free, with history).
+
+    The raw index is 0-100 (0 = extreme fear, 100 = extreme greed). It is a
+    real, market-wide sentiment gauge aggregating volatility, momentum, social
+    media and trends. It is *market-wide*, so it applies to all coins.
+
+    ``daily_sentiment`` maps the index to [-1, 1] via ``(value - 50) / 50``:
+    greed -> positive (bullish momentum reading). For the classic contrarian
+    reading ("buy fear, sell greed"), use ``SentimentStrategy(contrarian=True)``.
+    """
+
+    API_URL = "https://api.alternative.me/fng/"
+
+    def __init__(
+        self,
+        limit: int = 0,
+        session: Optional[requests.Session] = None,
+        cache_dir=None,
+        max_age_hours: float = 12.0,
+    ) -> None:
+        self.limit = limit  # 0 == full available history
+        self.session = session
+        self.max_age_hours = max_age_hours
+        from pathlib import Path
+
+        from .data import DEFAULT_CACHE_DIR
+
+        self.cache_file = Path(cache_dir or DEFAULT_CACHE_DIR) / "fear_greed.csv"
+
+    def _fetch_frame(self) -> pd.Series:
+        import time as _time
+
+        if self.cache_file.exists():
+            age_h = (_time.time() - self.cache_file.stat().st_mtime) / 3600.0
+            if age_h <= self.max_age_hours:
+                cached = pd.read_csv(self.cache_file, parse_dates=["date"])
+                return cached.set_index("date")["value"]
+
+        sess = self.session or requests
+        resp = sess.get(self.API_URL, params={"limit": self.limit}, timeout=30)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        rows = [
+            (
+                pd.to_datetime(int(d["timestamp"]), unit="s").normalize(),
+                float(d["value"]),
+            )
+            for d in data
+        ]
+        frame = pd.DataFrame(rows, columns=["date", "value"]).sort_values("date")
+        try:
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(self.cache_file, index=False)
+        except OSError:
+            pass
+        return frame.set_index("date")["value"]
+
+    def daily_sentiment(self, index: pd.DatetimeIndex) -> pd.Series:
+        try:
+            raw = self._fetch_frame()
+        except Exception:  # noqa: BLE001
+            if self.cache_file.exists():
+                cached = pd.read_csv(self.cache_file, parse_dates=["date"])
+                raw = cached.set_index("date")["value"]
+            else:
+                return pd.Series(0.0, index=index, name="sentiment")
+        aligned = raw.reindex(index).ffill()
+        series = ((aligned - 50.0) / 50.0).clip(-1.0, 1.0).fillna(0.0)
+        series.name = "sentiment"
+        return series
+
+
 class CryptoPanicProvider(SentimentProvider):
     """Fetches *current* headlines from CryptoPanic and scores them.
 

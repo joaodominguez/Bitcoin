@@ -14,7 +14,12 @@ import sys
 
 from . import data as data_mod
 from . import report as report_mod
-from .news import CryptoPanicProvider, KeywordSentimentProvider, NeutralProvider
+from .news import (
+    CryptoPanicProvider,
+    FearGreedProvider,
+    KeywordSentimentProvider,
+    NeutralProvider,
+)
 from .simulator import Simulator
 from .strategies import STRATEGY_REGISTRY, build_strategy
 
@@ -25,6 +30,11 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Simulador educativo de gestao de carteira de Bitcoin (dinheiro virtual).",
     )
     p.add_argument("--capital", type=float, default=10_000.0, help="Capital inicial (default 10000).")
+    p.add_argument(
+        "--coin",
+        default="bitcoin",
+        help="Cripto a simular (id CoinGecko: bitcoin, ethereum, solana, ...).",
+    )
     p.add_argument("--currency", default="eur", help="Moeda (eur, usd, ...).")
     p.add_argument("--days", type=int, default=365, help="Dias de historico (max 365 na API gratuita).")
     p.add_argument("--csv", help="Carregar historico de um CSV (colunas date,price) em vez da API.")
@@ -49,13 +59,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rsi-low", type=float, default=30.0, help="[rsi] Nivel de sobrevenda.")
     p.add_argument("--rsi-high", type=float, default=70.0, help="[rsi] Nivel de sobrecompra.")
     p.add_argument("--sent-threshold", type=float, default=0.2, help="[sentiment] Limiar de sentimento.")
+    p.add_argument(
+        "--contrarian",
+        action="store_true",
+        help="[sentiment] Comprar no medo / vender na ganancia (recomendado com feargreed).",
+    )
 
     # News / sentiment source.
     p.add_argument(
         "--news",
-        choices=["neutral", "keyword", "cryptopanic"],
+        choices=["neutral", "feargreed", "keyword", "cryptopanic"],
         default="neutral",
-        help="Fonte de sentimento de noticias.",
+        help="Fonte de sentimento (feargreed = indice Medo/Ganancia, real e com historico).",
     )
     p.add_argument("--news-csv", help="[keyword] CSV com colunas date,headline.")
 
@@ -74,11 +89,15 @@ def _make_strategy(name: str, args) -> object:
             "rsi", window=args.rsi_window, low=args.rsi_low, high=args.rsi_high
         )
     if name == "sentiment":
-        return build_strategy("sentiment", threshold=args.sent_threshold)
+        return build_strategy(
+            "sentiment", threshold=args.sent_threshold, contrarian=args.contrarian
+        )
     return build_strategy(name)
 
 
 def _make_sentiment_provider(args):
+    if args.news == "feargreed":
+        return FearGreedProvider()
     if args.news == "keyword":
         if not args.news_csv:
             raise SystemExit("--news keyword requer --news-csv com colunas date,headline")
@@ -92,9 +111,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     if args.csv:
-        series = data_mod.load_csv(args.csv, currency=args.currency)
+        series = data_mod.load_csv(args.csv, coin=args.coin, currency=args.currency)
     else:
-        series = data_mod.fetch(days=args.days, currency=args.currency)
+        series = data_mod.fetch(days=args.days, currency=args.currency, coin=args.coin)
     if args.start or args.end:
         series = series.slice(args.start, args.end)
 
@@ -117,7 +136,13 @@ def main(argv: list[str] | None = None) -> int:
             print(report_mod.text_report(r, currency=args.currency))
             print()
         if args.chart:
-            path = report_mod.save_chart(results, args.chart, currency=args.currency)
+            path = report_mod.save_chart(
+                results,
+                args.chart,
+                currency=args.currency,
+                title=f"Simulador de carteira - {args.coin.capitalize()}",
+                asset_label=args.coin.upper()[:4],
+            )
             print(f"Grafico guardado em: {path}")
     else:
         strategy = _make_strategy(args.strategy, args)
@@ -125,7 +150,11 @@ def main(argv: list[str] | None = None) -> int:
         print(report_mod.text_report(result, currency=args.currency))
         if args.chart:
             path = report_mod.save_chart(
-                {result.strategy_name: result}, args.chart, currency=args.currency
+                {result.strategy_name: result},
+                args.chart,
+                currency=args.currency,
+                title=f"Simulador de carteira - {args.coin.capitalize()}",
+                asset_label=args.coin.upper()[:4],
             )
             print(f"\nGrafico guardado em: {path}")
 

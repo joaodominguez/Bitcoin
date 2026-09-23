@@ -126,18 +126,27 @@ class RSIStrategy(Strategy):
 
 
 class SentimentStrategy(Strategy):
-    """Trade on news sentiment: bullish sentiment buys, bearish sells.
+    """Trade on news/market sentiment.
 
     Sentiment is smoothed over ``smooth`` days to reduce noise. With the
     default NeutralProvider this strategy never trades, which is by design --
-    plug in a real sentiment source to activate it.
+    plug in a real sentiment source (e.g. FearGreedProvider) to activate it.
+
+    Args:
+        threshold: absolute sentiment level (0-1) required to act.
+        smooth: rolling window (days) applied to the sentiment signal.
+        contrarian: if True, invert the logic -- buy on extreme fear
+            (very negative sentiment) and sell on extreme greed (very
+            positive). This is the classic "be greedy when others are
+            fearful" approach and pairs well with the Fear & Greed index.
     """
 
     name = "sentiment"
 
-    def __init__(self, threshold: float = 0.2, smooth: int = 3):
+    def __init__(self, threshold: float = 0.2, smooth: int = 3, contrarian: bool = False):
         self.threshold = threshold
         self.smooth = max(1, int(smooth))
+        self.contrarian = contrarian
 
     def prepare(self, prices, sentiment):
         super().prepare(prices, sentiment)
@@ -147,10 +156,14 @@ class SentimentStrategy(Strategy):
         s = self.smoothed.iloc[i]
         if pd.isna(s):
             return
-        if s >= self.threshold and portfolio.cash > 0:
-            portfolio.buy_all(date, price, reason=f"bullish news ({s:+.2f})")
-        elif s <= -self.threshold and portfolio.units > 0:
-            portfolio.sell_all(date, price, reason=f"bearish news ({s:+.2f})")
+        buy_signal = s <= -self.threshold if self.contrarian else s >= self.threshold
+        sell_signal = s >= self.threshold if self.contrarian else s <= -self.threshold
+        if buy_signal and portfolio.cash > 0:
+            label = "fear (contrarian buy)" if self.contrarian else "bullish news"
+            portfolio.buy_all(date, price, reason=f"{label} ({s:+.2f})")
+        elif sell_signal and portfolio.units > 0:
+            label = "greed (contrarian sell)" if self.contrarian else "bearish news"
+            portfolio.sell_all(date, price, reason=f"{label} ({s:+.2f})")
 
 
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {

@@ -85,6 +85,7 @@ def save_chart(
     path: str | Path,
     currency: str = "eur",
     title: str = "Simulador de carteira Bitcoin",
+    asset_label: str = "BTC",
 ) -> Path:
     """Save an equity-curve comparison chart (+ BTC price) to ``path``."""
     import matplotlib
@@ -112,9 +113,9 @@ def save_chart(
         any_result.price.values,
         color="orange",
         linewidth=1.2,
-        label="Preco BTC",
+        label=f"Preco {asset_label}",
     )
-    ax2.set_ylabel(f"BTC ({currency.upper()})")
+    ax2.set_ylabel(f"{asset_label} ({currency.upper()})")
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc="upper left", fontsize=9)
 
