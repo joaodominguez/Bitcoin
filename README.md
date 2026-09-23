@@ -71,6 +71,39 @@ Opções: `--host 0.0.0.0 --port 8080` (útil se quiseres aceder de outra máqui
 
 ![Dashboard](docs/dashboard.png)
 
+## Repartir o capital por várias criptos (alocação / diversificação)
+
+Em vez de pôr os 10 000 € numa só cripto, o `btcsim` **reparte-os da melhor forma
+possível** por várias, otimizando a carteira sobre dados históricos:
+
+```bash
+# Reparte 10.000 € por BTC/ETH/SOL com o método de máximo Sharpe e rebalanceia mensalmente
+python3 -m btcsim --allocate --coins bitcoin,ethereum,solana \
+    --method max_sharpe --rebalance-days 30 --chart output/alloc.png
+```
+
+Métodos de alocação (`--method`):
+
+- `equal` — peso igual (diversificação ingénua, boa referência).
+- `inverse_vol` — **paridade de risco**: mais peso às criptos menos voláteis.
+- `min_variance` — minimiza o risco total da carteira (mais defensivo).
+- `max_sharpe` — melhor relação risco/retorno histórica.
+
+O `min_variance` e o `max_sharpe` usam **otimização por Monte Carlo** (milhares de
+repartições possíveis) e o resultado inclui a **fronteira eficiente**.
+
+Na **dashboard**, o separador *"Repartir capital (alocação)"* mostra a repartição
+sugerida (gráfico circular), a curva de valor vs peso igual, a tabela de repartição
+e a fronteira eficiente:
+
+![Alocação](docs/allocation.png)
+
+> ⚠️ **Nota importante:** a otimização ajusta os pesos ao **passado**. O passado não
+> prevê o futuro e otimizar sobre o histórico tem risco de *overfitting* (parecer
+> ótimo no passado e falhar à frente). O `min_variance` e a diversificação simples
+> costumam ser mais robustos do que perseguir o retorno máximo. Diversifica sempre
+> e nunca ponhas tudo numa única aposta.
+
 ## Utilização rápida (linha de comandos)
 
 Gerir 10 000 € durante o último ano com DCA (compra semanal):
@@ -199,6 +232,7 @@ btcsim/
   indicators.py   # SMA, EMA, RSI, MACD
   portfolio.py    # estado da carteira (cash + BTC, trades, comissões)
   strategies.py   # estratégias de compra/venda
+  allocation.py   # repartição/otimização de carteira multi-cripto + rebalanceamento
   news.py         # análise de notícias/sentimento (plugável)
   simulator.py    # motor de backtest
   metrics.py      # métricas de desempenho
