@@ -45,14 +45,25 @@
     .muted { color: var(--muted); font-size: 12px; }
     h3 { margin: 18px 0 4px; font-size: 14px; }
     .err { color: var(--red); padding: 10px; }
+    .tabs { margin-left: auto; display: flex; gap: 8px; }
+    .tab { width: auto; margin: 0; padding: 8px 14px; background: var(--panel2);
+           color: var(--text); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+    .tab.active { background: var(--accent); color: #1a1200; }
+    .view { display: none; }
+    .view.active { display: block; }
   </style>
 </head>
 <body>
   <header>
     <span class="badge">₿ btcsim</span>
     <h1>Simulador de Carteira de Cripto — dinheiro virtual</h1>
+    <nav class="tabs">
+      <button class="tab active" data-view="strategies">Estratégias</button>
+      <button class="tab" data-view="allocate">Repartir capital (alocação)</button>
+    </nav>
   </header>
 
+  <div class="view active" id="view-strategies">
   <div class="wrap">
     <aside class="panel">
       <label for="capital">Capital inicial</label>
@@ -120,6 +131,64 @@
         <div id="tradesWrap"><p class="muted">—</p></div>
       </div>
     </main>
+  </div>
+  </div>
+
+  <div class="view" id="view-allocate">
+  <div class="wrap">
+    <aside class="panel">
+      <label for="a_capital">Capital a repartir</label>
+      <input id="a_capital" type="number" value="10000" min="1" step="100" />
+
+      <label for="a_coins">Criptos (separadas por vírgula)</label>
+      <input id="a_coins" type="text" value="bitcoin,ethereum,solana" />
+      <p class="muted">Ex.: bitcoin,ethereum,solana,cardano</p>
+
+      <label for="a_currency">Moeda</label>
+      <select id="a_currency">
+        <option value="eur" selected>EUR (€)</option>
+        <option value="usd">USD ($)</option>
+        <option value="gbp">GBP (£)</option>
+      </select>
+
+      <label for="a_method">Método de alocação</label>
+      <select id="a_method">
+        {% for m in methods %}
+        <option value="{{ m }}" {% if m == 'max_sharpe' %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="a_days">Período (dias, máx. 365)</label>
+      <input id="a_days" type="number" value="365" min="30" max="365" step="1" />
+
+      <label for="a_rebalance">Rebalanceamento (dias, 0 = nunca)</label>
+      <input id="a_rebalance" type="number" value="30" min="0" step="1" />
+
+      <label for="a_fee">Comissão por trade (%)</label>
+      <input id="a_fee" type="number" value="0.1" min="0" step="0.05" />
+
+      <button id="a_run">▶ Otimizar repartição</button>
+      <p class="muted" style="margin-top:14px;">
+        <b>min_variance</b> = mais seguro (menor risco). <b>max_sharpe</b> = melhor
+        risco/retorno histórico. A otimização usa o passado — não garante o futuro.</p>
+    </aside>
+
+    <main>
+      <div class="kpis" id="a_kpis"></div>
+      <div class="wrap" style="grid-template-columns: 1fr 1fr; padding: 0; gap: 18px;">
+        <div class="panel"><h3>Repartição sugerida</h3><div id="a_pie" style="height:320px;"></div></div>
+        <div class="panel"><h3>Valor da carteira vs peso igual</h3><div id="a_curve" style="height:320px;"></div></div>
+      </div>
+      <div class="panel">
+        <h3>Detalhe da repartição</h3>
+        <div id="a_tableWrap"><p class="muted">Carrega a otimização…</p></div>
+      </div>
+      <div class="panel">
+        <h3>Fronteira eficiente (Monte Carlo)</h3>
+        <div id="a_frontier" style="height:360px;"></div>
+      </div>
+    </main>
+  </div>
   </div>
 
   <p class="disclaimer">{{ disclaimer }}</p>
@@ -222,6 +291,102 @@ function render(d) {
 
 $('run').addEventListener('click', run);
 window.addEventListener('load', run);
+
+// ---- Tab switching ----
+let allocLoaded = false;
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    $('view-' + tab.dataset.view).classList.add('active');
+    if (tab.dataset.view === 'allocate' && !allocLoaded) { allocLoaded = true; runAlloc(); }
+  });
+});
+
+// ---- Allocation view ----
+async function runAlloc() {
+  const btn = $('a_run'); btn.disabled = true; btn.textContent = 'A otimizar…';
+  const p = new URLSearchParams();
+  p.set('capital', $('a_capital').value);
+  p.set('coins', $('a_coins').value);
+  p.set('currency', $('a_currency').value);
+  p.set('method', $('a_method').value);
+  p.set('days', $('a_days').value);
+  p.set('rebalance_days', $('a_rebalance').value);
+  p.set('fee', (parseFloat($('a_fee').value)/100).toString());
+  try {
+    const resp = await fetch('/api/allocate?' + p.toString());
+    const d = await resp.json();
+    if (d.error) throw new Error(d.error);
+    renderAlloc(d);
+  } catch (e) {
+    $('a_tableWrap').innerHTML = '<p class="err">Erro: '+e.message+'</p>';
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Otimizar repartição';
+  }
+}
+
+function renderAlloc(d) {
+  const cur = d.currency;
+  const beatEqual = d.end_value >= d.equal_end_value;
+  $('a_kpis').innerHTML = `
+    <div class="kpi"><div class="l">Método</div><div class="v">${d.method}</div></div>
+    <div class="kpi"><div class="l">Retorno esperado (anual)</div><div class="v ${cls(d.exp_return_pct)}">${sign(d.exp_return_pct)}%</div></div>
+    <div class="kpi"><div class="l">Volatilidade esperada</div><div class="v">${d.exp_volatility_pct.toFixed(1)}%</div></div>
+    <div class="kpi"><div class="l">Sharpe esperado</div><div class="v">${d.exp_sharpe.toFixed(2)}</div></div>
+    <div class="kpi"><div class="l">Valor final (backtest)</div><div class="v ${cls(d.return_pct)}">${fmtMoney(d.end_value, cur)}</div></div>
+    <div class="kpi"><div class="l">vs peso igual</div><div class="v ${beatEqual?'pos':'neg'}">${beatEqual?'melhor':'pior'}</div></div>`;
+
+  // Pie
+  Plotly.newPlot('a_pie', [{
+    type: 'pie', hole: 0.45,
+    labels: d.allocation.map(a => a.ticker),
+    values: d.allocation.map(a => a.weight_pct),
+    textinfo: 'label+percent',
+    marker: { colors: ['#f7931a','#3498db','#2ecc71','#9b59b6','#e74c3c','#1abc9c'] },
+  }], { paper_bgcolor:'#17212b', font:{color:'#e7edf3'}, margin:{t:10,b:10,l:10,r:10},
+        showlegend:false }, {responsive:true, displayModeBar:false});
+
+  // Equity curve vs equal
+  Plotly.newPlot('a_curve', [
+    { x: d.dates, y: d.curve, name: d.method, mode:'lines', line:{color:'#2ecc71', width:2} },
+    { x: d.dates, y: d.equal_curve, name: 'peso igual', mode:'lines', line:{color:'#95a5a6', width:1.4, dash:'dash'} },
+  ], { paper_bgcolor:'#17212b', plot_bgcolor:'#17212b', font:{color:'#e7edf3'},
+       margin:{t:10,r:20,b:40,l:60}, legend:{orientation:'h', y:1.15},
+       xaxis:{gridcolor:'#2a3a4b'}, yaxis:{title:'Valor ('+cur+')', gridcolor:'#2a3a4b'} },
+     {responsive:true, displayModeBar:false});
+
+  // Table
+  const rows = d.allocation.map(a => `
+    <tr><td>${a.coin}</td><td>${a.ticker}</td>
+      <td>${a.weight_pct.toFixed(1)}%</td><td>${fmtMoney(a.amount, cur)}</td></tr>`).join('');
+  $('a_tableWrap').innerHTML = `<table><thead><tr>
+      <th>Cripto</th><th>Ticker</th><th>Peso</th><th>Valor</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <p class="muted" style="margin-top:8px;">Rebalanceamento: ${d.rebalance_days>0? 'a cada '+d.rebalance_days+' dias':'nenhum'} ·
+      Max drawdown: ${d.max_dd_pct.toFixed(1)}% · Comissões: ${fmtMoney(d.fees, cur)}</p>`;
+
+  // Frontier
+  if (d.frontier && d.frontier.volatility && d.frontier.volatility.length) {
+    Plotly.newPlot('a_frontier', [
+      { x: d.frontier.volatility, y: d.frontier.returns, mode:'markers',
+        marker:{ size:4, color:d.frontier.sharpe, colorscale:'Viridis',
+                 colorbar:{title:'Sharpe'}, opacity:0.5 }, name:'carteiras' },
+      { x:[d.exp_volatility_pct], y:[d.exp_return_pct], mode:'markers',
+        marker:{ size:18, color:'#e74c3c', symbol:'star', line:{color:'#fff', width:1} },
+        name:'escolhida' },
+    ], { paper_bgcolor:'#17212b', plot_bgcolor:'#17212b', font:{color:'#e7edf3'},
+         margin:{t:10,r:20,b:45,l:60}, legend:{orientation:'h', y:1.15},
+         xaxis:{title:'Volatilidade (% anual)', gridcolor:'#2a3a4b'},
+         yaxis:{title:'Retorno esp. (% anual)', gridcolor:'#2a3a4b'} },
+       {responsive:true, displayModeBar:false});
+  } else {
+    $('a_frontier').innerHTML = '<p class="muted">Fronteira indisponível para este método.</p>';
+  }
+}
+
+$('a_run').addEventListener('click', runAlloc);
 </script>
 </body>
 </html>

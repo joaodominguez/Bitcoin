@@ -18,6 +18,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
+from . import allocation as alloc_mod
 from . import data as data_mod
 from .news import (
     FearGreedProvider,
@@ -125,6 +126,7 @@ def index():
         strategies=sorted(STRATEGY_REGISTRY),
         default_strategies=DEFAULT_STRATEGIES,
         coins=COINS,
+        methods=list(alloc_mod.ALLOCATION_METHODS),
         disclaimer=DISCLAIMER,
     )
 
@@ -143,6 +145,77 @@ def api_simulate():
         names = [n for n in names if n in STRATEGY_REGISTRY]
         payload = _run(capital, currency, days, fee, names,
                        news_source, contrarian, coin)
+        return jsonify(payload)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+
+
+def _run_allocation(capital, currency, days, fee, coins, method, rebalance_days):
+    prices = alloc_mod.load_prices(coins, currency=currency, days=days)
+    returns = alloc_mod.daily_returns(prices)
+
+    result = alloc_mod.optimize(coins, returns, method=method, n_samples=15_000)
+    bt = alloc_mod.backtest(prices, result.weights, initial_cash=capital,
+                            fee_rate=fee, rebalance_days=rebalance_days)
+    equal = alloc_mod.optimize(coins, returns, method="equal")
+    equal_bt = alloc_mod.backtest(prices, equal.weights, initial_cash=capital,
+                                  fee_rate=fee, rebalance_days=rebalance_days)
+
+    dates = [d.strftime("%Y-%m-%d") for d in bt.equity_curve.index]
+    allocation = [
+        {
+            "coin": c,
+            "ticker": data_mod.ticker_for(c),
+            "weight_pct": round(w * 100, 2),
+            "amount": round(w * capital, 2),
+        }
+        for c, w in sorted(result.weights.items(), key=lambda kv: -kv[1])
+    ]
+    frontier = result.frontier or {}
+    return {
+        "method": method,
+        "allocation": allocation,
+        "exp_return_pct": result.exp_return_pct,
+        "exp_volatility_pct": result.exp_volatility_pct,
+        "exp_sharpe": result.exp_sharpe,
+        "dates": dates,
+        "curve": [round(float(v), 2) for v in bt.equity_curve.values],
+        "equal_curve": [round(float(v), 2) for v in equal_bt.equity_curve.values],
+        "end_value": bt.end_value,
+        "return_pct": bt.total_return_pct,
+        "max_dd_pct": bt.max_drawdown_pct,
+        "fees": bt.total_fees,
+        "equal_end_value": equal_bt.end_value,
+        "equal_return_pct": equal_bt.total_return_pct,
+        "rebalance_days": rebalance_days,
+        "frontier": {
+            "volatility": frontier.get("volatility", []),
+            "returns": frontier.get("returns", []),
+            "sharpe": frontier.get("sharpe", []),
+        },
+        "currency": currency.upper(),
+        "capital": capital,
+        "disclaimer": DISCLAIMER,
+    }
+
+
+@app.route("/api/allocate")
+def api_allocate():
+    try:
+        capital = float(request.args.get("capital", 10_000))
+        currency = request.args.get("currency", "eur").lower()
+        days = int(request.args.get("days", 365))
+        fee = float(request.args.get("fee", 0.001))
+        rebalance_days = int(request.args.get("rebalance_days", 30))
+        method = request.args.get("method", "max_sharpe")
+        if method not in alloc_mod.ALLOCATION_METHODS:
+            method = "max_sharpe"
+        raw = request.args.get("coins", "bitcoin,ethereum,solana")
+        coins = [c.strip().lower() for c in raw.split(",") if c.strip()]
+        if len(coins) < 2:
+            return jsonify({"error": "Escolhe pelo menos 2 criptos."}), 400
+        payload = _run_allocation(capital, currency, days, fee, coins,
+                                  method, rebalance_days)
         return jsonify(payload)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
