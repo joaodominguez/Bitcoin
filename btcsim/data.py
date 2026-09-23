@@ -21,6 +21,7 @@ import pandas as pd
 import requests
 
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{coin}/market_chart"
+FRANKFURTER_URL = "https://api.frankfurter.dev/v1/{start}..{end}"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 YAHOO_COOKIE_URL = "https://fc.yahoo.com"
 YAHOO_UA = (
@@ -272,20 +273,95 @@ def fetch_stock(
     return PriceSeries(coin=symbol.upper(), currency=currency, frame=frame)
 
 
+def fetch_fx(
+    base: str,
+    quote: str,
+    days: int = MAX_FREE_DAYS,
+    cache_dir: Path | str = DEFAULT_CACHE_DIR,
+    max_age_hours: float = 24.0,
+    session: Optional[requests.Session] = None,
+) -> Optional[pd.Series]:
+    """Daily FX rate series: how many ``quote`` units per 1 ``base``.
+
+    Uses the free Frankfurter API (ECB reference rates). Returns ``None`` when
+    ``base == quote`` (identity). Weekends/holidays are forward-filled.
+    """
+    base = base.upper()
+    quote = quote.upper()
+    if base == quote:
+        return None
+
+    days = int(days)
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"fx_{base}_{quote}_{days}.csv"
+
+    if cache_file.exists():
+        age_hours = (time.time() - cache_file.stat().st_mtime) / 3600.0
+        if age_hours <= max_age_hours:
+            cached = pd.read_csv(cache_file, parse_dates=["date"])
+            return cached.set_index("date")["rate"]
+
+    sess = session or requests
+    end = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    start = end - pd.Timedelta(days=days + 5)
+    url = FRANKFURTER_URL.format(start=start.date(), end=end.date())
+    try:
+        resp = sess.get(url, params={"base": base, "symbols": quote}, timeout=30)
+        resp.raise_for_status()
+        rates = resp.json()["rates"]
+        rows = [
+            (pd.Timestamp(d).normalize(), float(vals[quote]))
+            for d, vals in rates.items()
+            if quote in vals
+        ]
+        if not rows:
+            raise ValueError("empty FX response")
+        series = pd.DataFrame(rows, columns=["date", "rate"]).sort_values("date")
+        series = series.set_index("date")["rate"].asfreq("D").ffill()
+    except Exception as exc:  # noqa: BLE001 - fall back to stale cache if possible
+        if cache_file.exists():
+            cached = pd.read_csv(cache_file, parse_dates=["date"])
+            return cached.set_index("date")["rate"]
+        raise RuntimeError(f"Failed to fetch FX {base}->{quote}: {exc}") from exc
+
+    series.to_frame().reset_index().to_csv(cache_file, index=False)
+    return series
+
+
+def _convert_frame(frame: pd.DataFrame, rate: pd.Series) -> pd.DataFrame:
+    aligned = rate.reindex(frame.index).ffill().bfill()
+    out = frame.copy()
+    out["price"] = out["price"] * aligned
+    return out
+
+
 def fetch_asset(
     spec: str,
     days: int = MAX_FREE_DAYS,
     currency: str = "eur",
+    convert: bool = True,
     **kwargs,
 ) -> PriceSeries:
     """Fetch a price series for any asset spec (``crypto:...`` or ``stock:...``).
 
     Bare specs are treated as crypto (CoinGecko). Stock prices come from Yahoo
-    Finance in their native currency (usually USD).
+    Finance in their native currency (usually USD) and, when ``convert`` is True,
+    are converted to ``currency`` using historical FX rates so mixed portfolios
+    are consistent.
     """
     kind, symbol = parse_asset(spec)
-    if kind == "stock":
-        return fetch_stock(symbol, days=days, **kwargs)
     if kind == "crypto":
         return fetch(days=days, currency=currency, coin=symbol, **kwargs)
+    if kind == "stock":
+        fetch_kwargs = {k: v for k, v in kwargs.items() if k in ("cache_dir", "max_age_hours", "session")}
+        series = fetch_stock(symbol, days=days, **fetch_kwargs)
+        target = currency.lower()
+        if convert and series.currency.lower() != target:
+            rate = fetch_fx(series.currency, currency, days=days,
+                            **{k: v for k, v in kwargs.items() if k in ("cache_dir", "max_age_hours")})
+            if rate is not None:
+                series = PriceSeries(series.coin, target,
+                                     _convert_frame(series.frame, rate))
+        return series
     raise ValueError(f"Unknown asset type '{kind}' (use 'crypto:' or 'stock:').")
