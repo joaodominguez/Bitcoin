@@ -211,6 +211,55 @@ def _run_allocation(capital, currency, days, fee, coins, method, rebalance_days)
     }
 
 
+def _run_walk_forward(capital, currency, days, fee, coins, method,
+                      rebalance_days, train_days, test_days):
+    prices = alloc_mod.load_prices(coins, currency=currency, days=days)
+    wf = alloc_mod.walk_forward(
+        prices, method=method, train_days=train_days, test_days=test_days,
+        rebalance_days=rebalance_days, initial_cash=capital, fee_rate=fee,
+        n_samples=12_000,
+    )
+    dates = [d.strftime("%Y-%m-%d") for d in wf.oos_equity.index]
+    return {
+        "method": method,
+        "dates": dates,
+        "oos_curve": [round(float(v), 2) for v in wf.oos_equity.values],
+        "equal_curve": [round(float(v), 2) for v in wf.equal_equity.values],
+        "metrics": wf.metrics.as_dict(),
+        "equal_metrics": wf.equal_metrics.as_dict(),
+        "beat_equal": wf.metrics.end_value >= wf.equal_metrics.end_value,
+        "segments": len(wf.segments),
+        "train_days": train_days,
+        "test_days": test_days,
+        "currency": currency.upper(),
+        "disclaimer": DISCLAIMER,
+    }
+
+
+@app.route("/api/walkforward")
+def api_walkforward():
+    try:
+        capital = float(request.args.get("capital", 10_000))
+        currency = request.args.get("currency", "eur").lower()
+        days = int(request.args.get("days", 365))
+        fee = float(request.args.get("fee", 0.001))
+        rebalance_days = int(request.args.get("rebalance_days", 30))
+        train_days = int(request.args.get("train_days", 180))
+        test_days = int(request.args.get("test_days", 30))
+        method = request.args.get("method", "max_sharpe")
+        if method not in alloc_mod.ALLOCATION_METHODS:
+            method = "max_sharpe"
+        raw = request.args.get("coins", "bitcoin,ethereum,solana")
+        coins = [c.strip().lower() for c in raw.split(",") if c.strip()]
+        if len(coins) < 2:
+            return jsonify({"error": "Escolhe pelo menos 2 ativos."}), 400
+        payload = _run_walk_forward(capital, currency, days, fee, coins,
+                                    method, rebalance_days, train_days, test_days)
+        return jsonify(payload)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/allocate")
 def api_allocate():
     try:
