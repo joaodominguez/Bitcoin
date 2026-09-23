@@ -34,7 +34,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--coin",
         default="bitcoin",
-        help="Cripto a simular (id CoinGecko: bitcoin, ethereum, solana, ...).",
+        help="Ativo a simular: cripto (bitcoin, ethereum, ...) ou acao (stock:AAPL, stock:MSFT).",
     )
     p.add_argument("--currency", default="eur", help="Moeda (eur, usd, ...).")
     p.add_argument("--days", type=int, default=365, help="Dias de historico (max 365 na API gratuita).")
@@ -60,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--coins",
         default="bitcoin,ethereum,solana",
-        help="[allocate] Lista de criptos separada por virgulas.",
+        help="[allocate] Lista de ativos (cripto e/ou stock:SIMBOLO) separada por virgulas.",
     )
     p.add_argument(
         "--method",
@@ -149,15 +149,16 @@ def _run_allocation(args) -> int:
 
     prices = alloc_mod.load_prices(coins, currency=args.currency, days=args.days)
     returns = alloc_mod.daily_returns(prices)
+    names = list(prices.columns)
 
     result = alloc_mod.optimize(
-        coins, returns, method=args.method, n_samples=args.samples
+        names, returns, method=args.method, n_samples=args.samples
     )
     bt = alloc_mod.backtest(
         prices, result.weights, initial_cash=args.capital,
         fee_rate=args.fee, rebalance_days=args.rebalance_days,
     )
-    equal = alloc_mod.optimize(coins, returns, method="equal")
+    equal = alloc_mod.optimize(names, returns, method="equal")
     equal_bt = alloc_mod.backtest(
         prices, equal.weights, initial_cash=args.capital,
         fee_rate=args.fee, rebalance_days=args.rebalance_days,
@@ -189,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.csv:
         series = data_mod.load_csv(args.csv, coin=args.coin, currency=args.currency)
     else:
-        series = data_mod.fetch(days=args.days, currency=args.currency, coin=args.coin)
+        series = data_mod.fetch_asset(args.coin, days=args.days, currency=args.currency)
     if args.start or args.end:
         series = series.slice(args.start, args.end)
 
@@ -200,37 +201,41 @@ def main(argv: list[str] | None = None) -> int:
         sentiment_provider=_make_sentiment_provider(args),
     )
 
+    disp_cur = series.currency or args.currency
+    label = data_mod.asset_label(args.coin)
+    _, symbol = data_mod.parse_asset(args.coin)
+
     print(report_mod.DISCLAIMER)
     print()
 
     if args.compare:
         strategies = [_make_strategy(name, args) for name in sorted(STRATEGY_REGISTRY)]
         results = sim.compare(strategies)
-        print(report_mod.comparison_table(results, currency=args.currency))
+        print(report_mod.comparison_table(results, currency=disp_cur))
         print()
         for r in results.values():
-            print(report_mod.text_report(r, currency=args.currency))
+            print(report_mod.text_report(r, currency=disp_cur))
             print()
         if args.chart:
             path = report_mod.save_chart(
                 results,
                 args.chart,
-                currency=args.currency,
-                title=f"Simulador de carteira - {args.coin.capitalize()}",
-                asset_label=data_mod.ticker_for(args.coin),
+                currency=disp_cur,
+                title=f"Simulador de carteira - {symbol.capitalize()}",
+                asset_label=label,
             )
             print(f"Grafico guardado em: {path}")
     else:
         strategy = _make_strategy(args.strategy, args)
         result = sim.run(strategy)
-        print(report_mod.text_report(result, currency=args.currency))
+        print(report_mod.text_report(result, currency=disp_cur))
         if args.chart:
             path = report_mod.save_chart(
                 {result.strategy_name: result},
                 args.chart,
-                currency=args.currency,
-                title=f"Simulador de carteira - {args.coin.capitalize()}",
-                asset_label=data_mod.ticker_for(args.coin),
+                currency=disp_cur,
+                title=f"Simulador de carteira - {symbol.capitalize()}",
+                asset_label=label,
             )
             print(f"\nGrafico guardado em: {path}")
 

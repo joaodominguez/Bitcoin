@@ -27,20 +27,31 @@ TRADING_DAYS = 365
 ALLOCATION_METHODS = ("equal", "inverse_vol", "max_sharpe", "min_variance")
 
 
+def _spec_name(spec: str) -> str:
+    """A clean column name for an asset spec (crypto id or stock symbol)."""
+    kind, symbol = data_mod.parse_asset(spec)
+    return symbol.upper() if kind == "stock" else symbol.lower()
+
+
 def load_prices(
     coins: list[str],
     currency: str = "eur",
     days: int = 365,
     **fetch_kwargs,
 ) -> pd.DataFrame:
-    """Return a DataFrame of aligned daily prices, one column per coin."""
+    """Return a DataFrame of aligned daily prices, one column per asset.
+
+    ``coins`` may mix crypto and stocks using asset specs, e.g.
+    ``["bitcoin", "ethereum", "stock:AAPL"]``. Assets are aligned on their
+    common dates (inner join), which naturally handles stock market holidays.
+    """
     frames = {}
-    for coin in coins:
-        series = data_mod.fetch(days=days, currency=currency, coin=coin, **fetch_kwargs)
-        frames[coin] = series.frame["price"]
+    for spec in coins:
+        series = data_mod.fetch_asset(spec, days=days, currency=currency, **fetch_kwargs)
+        frames[_spec_name(spec)] = series.frame["price"]
     prices = pd.DataFrame(frames).dropna()
     if prices.empty or len(prices.columns) < 1:
-        raise ValueError("Not enough overlapping price data across the coins.")
+        raise ValueError("Not enough overlapping price data across the assets.")
     return prices
 
 
