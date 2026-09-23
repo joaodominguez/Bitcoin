@@ -37,7 +37,29 @@ A ideia central: em vez de tentar "adivinhar" quando comprar e vender, defines u
 pip install -r requirements.txt
 ```
 
-## Utilização rápida
+## Dashboard interativa (a forma mais fácil de ver)
+
+Arranca a dashboard web e abre no browser:
+
+```bash
+python3 -m btcsim.dashboard
+# depois abre http://127.0.0.1:8000
+```
+
+Na dashboard podes, sem tocar em código:
+
+- definir o **capital inicial** (ex.: 10 000 €), a **moeda** e o **período**;
+- escolher que **estratégias** comparar (checkboxes);
+- ligar as **notícias de exemplo** para ativar a estratégia de sentimento;
+- ver um **gráfico interativo** das curvas de valor + preço do BTC, os **KPIs**,
+  uma **tabela comparativa** (a melhor estratégia fica destacada) e os
+  **trades recentes**.
+
+Opções: `--host 0.0.0.0 --port 8080` (útil se quiseres aceder de outra máquina).
+
+![Dashboard](docs/dashboard.png)
+
+## Utilização rápida (linha de comandos)
 
 Gerir 10 000 € durante o último ano com DCA (compra semanal):
 
