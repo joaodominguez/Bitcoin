@@ -1,0 +1,14 @@
+services:
+  btcsim:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DASHBOARD_USER: ${DASHBOARD_USER:-btcsim}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+    volumes:
+      - btcsim-cache:/app/.cache
+
+volumes:
+  btcsim-cache:

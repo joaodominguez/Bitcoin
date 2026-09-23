@@ -12,6 +12,9 @@ output/
 *.png
 !docs/*.png
 
+# Secrets
+.env
+
 # OS
 .DS_Store
 
