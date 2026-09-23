@@ -20,8 +20,13 @@ A ideia central: em vez de tentar "adivinhar" quando comprar e vender, defines u
 - **Cripto e ações**, via *asset specs*:
   - cripto (CoinGecko): `bitcoin`, `ethereum`, `solana`, ... (ou `crypto:bitcoin`);
   - ações/ETFs/índices (Yahoo Finance): `stock:AAPL`, `stock:MSFT`, `stock:SPY`, ...
-- **Dados reais**, gratuitos e sem chave: CoinGecko (cripto, até 365 dias) e
-  Yahoo Finance (ações, histórico longo), com cache em disco. Também aceita CSV próprio.
+- **Dados reais**, gratuitos e sem chave: CoinGecko (cripto, até 365 dias),
+  Yahoo Finance (ações, histórico longo) e Frankfurter/BCE (câmbio), com cache em
+  disco. Também aceita CSV próprio.
+- **Conversão cambial automática** das ações (USD) para a tua moeda (ex.: EUR), para
+  carteiras mistas consistentes.
+- **Validação out-of-sample (walk-forward)** para julgar as estratégias de forma
+  honesta e combater o *overfitting*.
 - **Intervalo de análise:** **diário** (1 preço de fecho por dia). É a granularidade
   usada para todos os cálculos e sinais; para *backtesting* é a mais robusta.
 - **Estratégias incluídas:**
@@ -100,9 +105,10 @@ Na **dashboard**, o separador de estratégias tem um seletor com secções *Crip
 
 ![Alocação mista](docs/allocation_mixed.png)
 
-> Nota: os preços de ações vêm na sua moeda nativa (normalmente USD). Ao misturar
-> ativos de moedas diferentes numa só carteira, os valores são somados nominalmente
-> — suficiente para fins educativos, mas não é uma conversão cambial exata.
+> **Conversão cambial automática:** os preços de ações vêm em moeda nativa (USD),
+> mas são **convertidos para a tua moeda** (ex.: EUR) usando taxas de câmbio
+> históricas reais (BCE, via Frankfurter). Assim as carteiras mistas ficam
+> consistentes. Podes desativar com `convert=False` na API.
 
 ## Repartir o capital por várias criptos (alocação / diversificação)
 
@@ -124,6 +130,25 @@ Métodos de alocação (`--method`):
 
 O `min_variance` e o `max_sharpe` usam **otimização por Monte Carlo** (milhares de
 repartições possíveis) e o resultado inclui a **fronteira eficiente**.
+
+### Validação out-of-sample (walk-forward)
+
+Otimizar sobre todo o histórico pode enganar (*overfitting*): os pesos parecem
+ótimos no passado mas falham à frente. O **walk-forward** resolve isto — otimiza
+numa janela de **treino** e avalia na janela de **teste** seguinte (dados nunca
+vistos), avançando no tempo. É a forma honesta de julgar uma estratégia:
+
+```bash
+python3 -m btcsim --allocate --walk-forward \
+    --coins "bitcoin,ethereum,stock:AAPL,stock:MSFT,stock:SPY" \
+    --method min_variance --train-days 180 --test-days 30 --chart output/wf.png
+```
+
+Compara o resultado **fora da amostra** com uma referência de peso igual. Na
+dashboard, ativa a opção *"Validar out-of-sample (walk-forward)"* no separador de
+alocação:
+
+![Walk-forward](docs/walkforward.png)
 
 Na **dashboard**, o separador *"Repartir capital (alocação)"* mostra a repartição
 sugerida (gráfico circular), a curva de valor vs peso igual, a tabela de repartição
