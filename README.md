@@ -57,10 +57,13 @@ python3 -m btcsim.dashboard
 
 Na dashboard podes, sem tocar em código:
 
+- escolher a **criptomoeda** (Bitcoin, Ethereum, Solana, ...);
 - definir o **capital inicial** (ex.: 10 000 €), a **moeda** e o **período**;
 - escolher que **estratégias** comparar (checkboxes);
-- ligar as **notícias de exemplo** para ativar a estratégia de sentimento;
-- ver um **gráfico interativo** das curvas de valor + preço do BTC, os **KPIs**,
+- escolher a **fonte de sentimento**: nenhuma, **Fear & Greed** (real, do mercado)
+  ou notícias de exemplo — com opção de **modo contrário** (comprar no medo,
+  vender na ganância);
+- ver um **gráfico interativo** das curvas de valor + preço do ativo, os **KPIs**,
   uma **tabela comparativa** (a melhor estratégia fica destacada) e os
   **trades recentes**.
 
