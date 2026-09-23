@@ -69,11 +69,18 @@
       <label for="capital">Capital inicial</label>
       <input id="capital" type="number" value="10000" min="1" step="100" />
 
-      <label for="coin">Criptomoeda</label>
+      <label for="coin">Ativo</label>
       <select id="coin">
+        <optgroup label="Cripto">
         {% for c in coins %}
         <option value="{{ c }}" {% if c == 'bitcoin' %}selected{% endif %}>{{ c|capitalize }}</option>
         {% endfor %}
+        </optgroup>
+        <optgroup label="Ações">
+        {% for val, name in stocks %}
+        <option value="{{ val }}">{{ name }}</option>
+        {% endfor %}
+        </optgroup>
       </select>
 
       <label for="currency">Moeda</label>
@@ -140,9 +147,9 @@
       <label for="a_capital">Capital a repartir</label>
       <input id="a_capital" type="number" value="10000" min="1" step="100" />
 
-      <label for="a_coins">Criptos (separadas por vírgula)</label>
-      <input id="a_coins" type="text" value="bitcoin,ethereum,solana" />
-      <p class="muted">Ex.: bitcoin,ethereum,solana,cardano</p>
+      <label for="a_coins">Ativos (separados por vírgula)</label>
+      <input id="a_coins" type="text" value="bitcoin,ethereum,stock:AAPL,stock:MSFT" />
+      <p class="muted">Cripto e/ou ações. Ex.: bitcoin,ethereum,stock:AAPL,stock:SPY</p>
 
       <label for="a_currency">Moeda</label>
       <select id="a_currency">

@@ -30,6 +30,15 @@ from .simulator import Simulator
 from .strategies import STRATEGY_REGISTRY, build_strategy
 
 COINS = ["bitcoin", "ethereum", "solana", "cardano", "dogecoin", "binancecoin"]
+STOCKS = [
+    ("stock:AAPL", "Apple (AAPL)"),
+    ("stock:MSFT", "Microsoft (MSFT)"),
+    ("stock:GOOGL", "Alphabet (GOOGL)"),
+    ("stock:AMZN", "Amazon (AMZN)"),
+    ("stock:NVDA", "Nvidia (NVDA)"),
+    ("stock:TSLA", "Tesla (TSLA)"),
+    ("stock:SPY", "S&P 500 ETF (SPY)"),
+]
 
 app = Flask(__name__)
 
@@ -60,7 +69,8 @@ def _make_provider(news_source: str):
 def _run(capital: float, currency: str, days: int, fee: float,
          strategy_names: list[str], news_source: str, contrarian: bool,
          coin: str) -> dict:
-    series = data_mod.fetch(days=days, currency=currency, coin=coin)
+    series = data_mod.fetch_asset(coin, days=days, currency=currency)
+    currency = series.currency or currency
 
     provider = _make_provider(news_source)
 
@@ -112,7 +122,7 @@ def _run(capital: float, currency: str, days: int, fee: float,
         "currency": currency.upper(),
         "capital": capital,
         "coin": coin,
-        "asset_label": data_mod.ticker_for(coin),
+        "asset_label": data_mod.asset_label(coin),
         "news_source": news_source,
         "period": {"start": dates[0], "end": dates[-1], "days": len(dates)},
         "disclaimer": DISCLAIMER,
@@ -126,6 +136,7 @@ def index():
         strategies=sorted(STRATEGY_REGISTRY),
         default_strategies=DEFAULT_STRATEGIES,
         coins=COINS,
+        stocks=STOCKS,
         methods=list(alloc_mod.ALLOCATION_METHODS),
         disclaimer=DISCLAIMER,
     )
@@ -153,11 +164,12 @@ def api_simulate():
 def _run_allocation(capital, currency, days, fee, coins, method, rebalance_days):
     prices = alloc_mod.load_prices(coins, currency=currency, days=days)
     returns = alloc_mod.daily_returns(prices)
+    names = list(prices.columns)
 
-    result = alloc_mod.optimize(coins, returns, method=method, n_samples=15_000)
+    result = alloc_mod.optimize(names, returns, method=method, n_samples=15_000)
     bt = alloc_mod.backtest(prices, result.weights, initial_cash=capital,
                             fee_rate=fee, rebalance_days=rebalance_days)
-    equal = alloc_mod.optimize(coins, returns, method="equal")
+    equal = alloc_mod.optimize(names, returns, method="equal")
     equal_bt = alloc_mod.backtest(prices, equal.weights, initial_cash=capital,
                                   fee_rate=fee, rebalance_days=rebalance_days)
 
