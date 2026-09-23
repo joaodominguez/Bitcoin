@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.chart,
                 currency=args.currency,
                 title=f"Simulador de carteira - {args.coin.capitalize()}",
-                asset_label=args.coin.upper()[:4],
+                asset_label=data_mod.ticker_for(args.coin),
             )
             print(f"Grafico guardado em: {path}")
     else:
@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.chart,
                 currency=args.currency,
                 title=f"Simulador de carteira - {args.coin.capitalize()}",
-                asset_label=args.coin.upper()[:4],
+                asset_label=data_mod.ticker_for(args.coin),
             )
             print(f"\nGrafico guardado em: {path}")
 

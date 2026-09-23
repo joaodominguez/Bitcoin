@@ -19,6 +19,23 @@ COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/{coin}/market_chart"
 DEFAULT_CACHE_DIR = Path(".cache")
 MAX_FREE_DAYS = 365
 
+TICKERS = {
+    "bitcoin": "BTC",
+    "ethereum": "ETH",
+    "solana": "SOL",
+    "cardano": "ADA",
+    "dogecoin": "DOGE",
+    "binancecoin": "BNB",
+    "ripple": "XRP",
+    "litecoin": "LTC",
+    "polkadot": "DOT",
+}
+
+
+def ticker_for(coin: str) -> str:
+    """Return a short ticker for a CoinGecko coin id (fallback: upper-cased id)."""
+    return TICKERS.get(coin.lower(), coin.upper()[:5])
+
 
 @dataclass
 class PriceSeries:
