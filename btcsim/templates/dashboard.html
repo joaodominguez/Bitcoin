@@ -60,6 +60,7 @@
     <nav class="tabs">
       <button class="tab active" data-view="strategies">Estratégias</button>
       <button class="tab" data-view="allocate">Repartir capital (alocação)</button>
+      <button class="tab" data-view="watch">Watchlist</button>
     </nav>
   </header>
 
@@ -208,6 +209,27 @@
   </div>
   </div>
 
+  <div class="view" id="view-watch">
+  <div class="wrap">
+    <aside class="panel">
+      <h3 style="margin-top:0;">Autonomia virtual</h3>
+      <p class="muted">A plataforma pode ler notícias públicas, acrescentar cripto ou ações a esta lista e gravar a decisão seguinte. É dinheiro virtual. Não envia ordens reais.</p>
+      <p class="muted">No servidor, um processo repete isto a cada 6 horas. Aqui podes forçar uma passagem.</p>
+      <button id="w_run">▶ Ler notícias e decidir</button>
+    </aside>
+    <main>
+      <div class="panel">
+        <h3>Watchlist</h3>
+        <div id="w_list"><p class="muted">A abrir…</p></div>
+      </div>
+      <div class="panel">
+        <h3>Última decisão virtual</h3>
+        <div id="w_decision"><p class="muted">Ainda sem decisão.</p></div>
+      </div>
+    </main>
+  </div>
+  </div>
+
   <p class="disclaimer">{{ disclaimer }}</p>
 
 <script>
@@ -318,6 +340,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.add('active');
     $('view-' + tab.dataset.view).classList.add('active');
     if (tab.dataset.view === 'allocate' && !allocLoaded) { allocLoaded = true; runAlloc(); }
+    if (tab.dataset.view === 'watch') loadWatch();
   });
 });
 
@@ -428,6 +451,57 @@ function renderAlloc(d) {
 }
 
 $('a_run').addEventListener('click', runAlloc);
+
+async function loadWatch() {
+  const resp = await fetch('/api/watch');
+  const d = await resp.json();
+  renderWatch(d.watchlist, d.decision, null);
+}
+
+function renderWatch(list, decision, changes) {
+  const assets = (list && list.assets) || [];
+  const rows = assets.map(a => `<tr>
+    <td>${a.spec}</td>
+    <td class="${a.caution ? 'neg' : 'pos'}">${a.caution ? 'cautela' : 'ativa'}</td>
+    <td style="text-align:left">${a.reason || ''}</td>
+    <td style="text-align:left">${a.headline || ''}</td></tr>`).join('');
+  const extra = changes
+    ? `<p class="muted">Nesta passagem: +${(changes.added||[]).length} ativos, ${(changes.cautioned||[]).length} em cautela.</p>`
+    : '';
+  $('w_list').innerHTML = extra + (rows
+    ? `<table><thead><tr><th>Ativo</th><th>Estado</th><th style="text-align:left">Motivo</th><th style="text-align:left">Notícia</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<p class="muted">Lista vazia.</p>')
+    + (list && list.authorization ? `<p class="muted" style="margin-top:8px;">${list.authorization}</p>` : '');
+
+  if (!decision) {
+    $('w_decision').innerHTML = '<p class="muted">Ainda sem decisão.</p>';
+    return;
+  }
+  const cur = decision.currency || 'EUR';
+  const acts = (decision.actions || []).map(a => `<tr>
+    <td>${a.asset}</td><td class="${a.action==='SELL'?'neg':a.action==='BUY'?'pos':''}">${a.action}</td>
+    <td>${a.weight_after_pct.toFixed(1)}%</td><td>${fmtMoney(a.amount, cur)}</td></tr>`).join('');
+  $('w_decision').innerHTML = `<p class="muted">${decision.note || ''} ${decision.disclaimer || ''}</p>
+    <table><thead><tr><th>Ativo</th><th>Ação</th><th>Peso</th><th>Valor virtual</th></tr></thead>
+    <tbody>${acts || '<tr><td colspan="4">Cash virtual</td></tr>'}</tbody></table>`;
+}
+
+$('w_run').addEventListener('click', async () => {
+  const btn = $('w_run');
+  btn.disabled = true; btn.textContent = 'A ler notícias…';
+  try {
+    const resp = await fetch('/api/watch/run');
+    const d = await resp.json();
+    if (d.error) throw new Error(d.error);
+    const listResp = await fetch('/api/watch');
+    const list = await listResp.json();
+    renderWatch(list.watchlist, d.decision, d.changes);
+  } catch (e) {
+    $('w_decision').innerHTML = '<p class="err">Erro: '+e.message+'</p>';
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Ler notícias e decidir';
+  }
+});
 </script>
 </body>
 </html>

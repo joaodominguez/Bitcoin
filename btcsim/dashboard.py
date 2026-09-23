@@ -29,6 +29,7 @@ from .news import (
 from .report import DISCLAIMER
 from .simulator import Simulator
 from .strategies import STRATEGY_REGISTRY, build_strategy
+from . import watchlist as watchlist_mod
 
 COINS = ["bitcoin", "ethereum", "solana", "cardano", "dogecoin", "binancecoin"]
 STOCKS = [
@@ -281,6 +282,28 @@ def api_walkforward():
         payload = _run_walk_forward(capital, currency, days, fee, coins,
                                     method, rebalance_days, train_days, test_days)
         return jsonify(payload)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/watch")
+def api_watch():
+    data = watchlist_mod.load()
+    decision_path = watchlist_mod.state_dir() / "last_decision.json"
+    decision = None
+    if decision_path.exists():
+        decision = json.loads(decision_path.read_text(encoding="utf-8"))
+    return jsonify({"watchlist": data, "decision": decision})
+
+
+@app.route("/api/watch/run")
+def api_watch_run():
+    try:
+        capital = float(request.args.get("capital", 10_000))
+        result = watchlist_mod.run_once()
+        if capital != 10_000:
+            result["decision"] = watchlist_mod.decide(capital=capital)
+        return jsonify(result)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
 
