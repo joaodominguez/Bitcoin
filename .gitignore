@@ -6,8 +6,9 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Simulator artifacts
+# Simulator artifacts and runtime decisions
 .cache/
+state/
 output/
 *.png
 !docs/*.png

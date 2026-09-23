@@ -92,6 +92,8 @@ docker compose up -d --build
 
 A dashboard fica em `http://IP-DO-SERVIDOR:8000`. O contentor reinicia sozinho se o servidor reiniciar (`restart: unless-stopped`).
 
+Um segundo processo, `watcher`, corre a cada 6 horas: lê notícias públicas, pode acrescentar cripto ou ações à watchlist e grava uma decisão de alocação **virtual** (separador *Watchlist*). Não envia ordens a nenhuma corretora. A permissão para esta autonomia fica escrita em `state/watchlist.json`.
+
 - Define `DASHBOARD_PASSWORD` no `.env`. Sem password, qualquer pessoa que chegue à porta consegue usar a ferramenta e gastar o teu tráfego nas APIs de preços.
 - O servidor precisa de saída HTTPS (CoinGecko, Yahoo Finance e câmbio). Cerca de 512 MB de RAM chegam.
 - Para um endereço com HTTPS (ex.: `https://carteira.oteudominio.pt`), põe o Nginx ou o Caddy que já tenhas à frente da porta 8000. Não abras a porta 8000 diretamente à internet se puderes evitar.

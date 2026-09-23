@@ -9,6 +9,16 @@ services:
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
     volumes:
       - btcsim-cache:/app/.cache
+      - btcsim-state:/app/state
+
+  watcher:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "btcsim.watchlist", "--loop", "--every-hours", "6"]
+    volumes:
+      - btcsim-cache:/app/.cache
+      - btcsim-state:/app/state
 
 volumes:
   btcsim-cache:
+  btcsim-state:
