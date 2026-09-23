@@ -62,6 +62,47 @@ def test_decide_sells_cautious_assets(tmp_path):
     assert any(a["action"] == "BUY" for a in decision["actions"])
 
 
+def test_rising_pattern_suggests_keeping():
+    idx = pd.date_range("2024-01-01", periods=80, freq="D")
+    values = [100 + i * 1.2 for i in range(40)]
+    base = values[-1]
+    for i in range(40):
+        values.append(base + (i % 6 - 2) * 1.5 + i * 0.15)
+    prices = pd.DataFrame({"bitcoin": values}, index=idx)
+    study = W.study_patterns(prices)[0]
+    assert study["trend"].startswith("alta")
+    assert study["rsi"] < 70
+    assert study["stance"] == "manter ou reforçar aos poucos"
+
+
+def test_stretched_rally_says_do_not_chase():
+    idx = pd.date_range("2024-01-01", periods=80, freq="D")
+    # Flat, then a vertical jump so RSI saturates.
+    values = [100.0] * 60 + [100 + (i + 1) * 8 for i in range(20)]
+    prices = pd.DataFrame({"bitcoin": values}, index=idx)
+    study = W.study_patterns(prices)[0]
+    assert study["rsi"] >= 70
+    assert study["stance"] == "não perseguir"
+
+
+def test_downtrend_says_reduce():
+    idx = pd.date_range("2024-01-01", periods=80, freq="D")
+    prices = pd.DataFrame({"bitcoin": [200 - i * 1.2 for i in range(80)]}, index=idx)
+    study = W.study_patterns(prices)[0]
+    assert study["trend"].startswith("baixa")
+    assert study["stance"] in {"reduzir", "não entrar com tudo"}
+
+
+def test_decision_includes_advice(tmp_path):
+    path = tmp_path / "watchlist.json"
+    W.save({"assets": [{"spec": "bitcoin", "caution": False}]}, path)
+    idx = pd.date_range("2024-01-01", periods=80, freq="D")
+    prices = pd.DataFrame({"bitcoin": [100 + i * 0.5 for i in range(80)]}, index=idx)
+    decision = W.decide(path, prices=prices)
+    assert "bitcoin" in decision["advice"]
+    assert decision["patterns"][0]["asset"] == "bitcoin"
+
+
 def test_second_decision_can_hold(tmp_path):
     path = tmp_path / "watchlist.json"
     W.save({"assets": [{"spec": "bitcoin", "caution": False}]}, path)

@@ -223,6 +223,10 @@
         <div id="w_list"><p class="muted">A abrir…</p></div>
       </div>
       <div class="panel">
+        <h3>O que a automação faria</h3>
+        <div id="w_advice"><p class="muted">Ainda sem leitura.</p></div>
+        <h3>Padrões lidos</h3>
+        <div id="w_patterns"><p class="muted">—</p></div>
         <h3>Última decisão virtual</h3>
         <div id="w_decision"><p class="muted">Ainda sem decisão.</p></div>
       </div>
@@ -474,9 +478,21 @@ function renderWatch(list, decision, changes) {
     + (list && list.authorization ? `<p class="muted" style="margin-top:8px;">${list.authorization}</p>` : '');
 
   if (!decision) {
+    $('w_advice').innerHTML = '<p class="muted">Ainda sem leitura.</p>';
+    $('w_patterns').innerHTML = '<p class="muted">—</p>';
     $('w_decision').innerHTML = '<p class="muted">Ainda sem decisão.</p>';
     return;
   }
+  $('w_advice').innerHTML = `<p style="font-size:16px;line-height:1.45;">${decision.advice || decision.note || ''}</p>
+    <p class="muted">${decision.disclaimer || ''}</p>`;
+  const patterns = decision.patterns || [];
+  $('w_patterns').innerHTML = patterns.length ? `<table><thead><tr>
+      <th>Ativo</th><th>Tendência</th><th>RSI</th><th>30 dias</th><th style="text-align:left">Leitura</th>
+    </tr></thead><tbody>${patterns.map(p => `<tr>
+      <td>${p.asset}</td><td>${p.trend}</td><td>${p.rsi}</td>
+      <td class="${cls(p.return_30d_pct)}">${sign(p.return_30d_pct)}%</td>
+      <td style="text-align:left">${p.stance}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">Ainda sem padrões (faltam dias de histórico).</p>';
   const cur = decision.currency || 'EUR';
   const acts = (decision.actions || []).map(a => `<tr>
     <td>${a.asset}</td><td class="${a.action==='SELL'?'neg':a.action==='BUY'?'pos':''}">${a.action}</td>
