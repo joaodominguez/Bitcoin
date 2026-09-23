@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Optional
 
 import pandas as pd
 
@@ -120,6 +120,102 @@ def save_chart(
     ax2.legend(loc="upper left", fontsize=9)
 
     fig.text(0.5, 0.005, DISCLAIMER, ha="center", fontsize=7, style="italic", wrap=True)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
+def allocation_text_report(
+    result, backtest, currency: str = "eur", initial_cash: float = 10_000.0
+) -> str:
+    """Text summary for a multi-asset allocation (from btcsim.allocation)."""
+    lines = []
+    lines.append("=" * 60)
+    lines.append(f"Alocacao otima ({result.method}) de {_fmt_money(initial_cash, currency)}")
+    lines.append("=" * 60)
+    lines.append("Repartição sugerida:")
+    for coin, w in sorted(result.weights.items(), key=lambda kv: -kv[1]):
+        lines.append(
+            f"  {coin:<14} {w * 100:5.1f}%   ({_fmt_money(w * initial_cash, currency)})"
+        )
+    lines.append("-" * 60)
+    lines.append(f"Retorno esperado (anual):  {result.exp_return_pct:+.2f}%")
+    lines.append(f"Volatilidade esperada:     {result.exp_volatility_pct:.2f}%")
+    lines.append(f"Sharpe esperado:           {result.exp_sharpe:.2f}")
+    lines.append("-" * 60)
+    lines.append("Resultado real no periodo (backtest, com rebalanceamento):")
+    lines.append(
+        f"  Rebalanceamento a cada {backtest.rebalance_days} dias"
+        if backtest.rebalance_days
+        else "  Sem rebalanceamento (pesos flutuam)"
+    )
+    lines.append(f"  Valor final:   {_fmt_money(backtest.end_value, currency)}")
+    lines.append(f"  Retorno total: {backtest.total_return_pct:+.2f}%")
+    lines.append(f"  Max drawdown:  {backtest.max_drawdown_pct:.2f}%")
+    lines.append(f"  Comissoes:     {_fmt_money(backtest.total_fees, currency)}")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+def save_allocation_chart(
+    result,
+    backtest,
+    path: str | Path,
+    currency: str = "eur",
+    equal_backtest=None,
+    title: str = "Alocacao otima da carteira",
+) -> Path:
+    """Chart with the weight pie, the equity curve and (if available) the frontier."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig = plt.figure(figsize=(13, 7))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1, 1.4], height_ratios=[1, 1])
+    ax_pie = fig.add_subplot(gs[:, 0])
+    ax_eq = fig.add_subplot(gs[0, 1])
+    ax_fr = fig.add_subplot(gs[1, 1])
+
+    labels = [c for c, w in result.weights.items() if w > 0.005]
+    sizes = [result.weights[c] for c in labels]
+    ax_pie.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90,
+               textprops={"fontsize": 9})
+    ax_pie.set_title(f"{title}\n({result.method})", fontsize=11)
+
+    ax_eq.plot(backtest.equity_curve.index, backtest.equity_curve.values,
+               color="#2ecc71", linewidth=1.8, label=f"Alocacao {result.method}")
+    if equal_backtest is not None:
+        ax_eq.plot(equal_backtest.equity_curve.index, equal_backtest.equity_curve.values,
+                   color="#95a5a6", linewidth=1.3, linestyle="--", label="Peso igual")
+    ax_eq.set_ylabel(f"Valor ({currency.upper()})")
+    ax_eq.set_title("Valor da carteira", fontsize=10)
+    ax_eq.legend(loc="upper left", fontsize=8)
+    ax_eq.grid(True, alpha=0.3)
+
+    fr = result.frontier
+    if fr and fr.get("volatility"):
+        sc = ax_fr.scatter(fr["volatility"], fr["returns"], c=fr["sharpe"],
+                           cmap="viridis", s=6, alpha=0.5)
+        ax_fr.scatter([result.exp_volatility_pct], [result.exp_return_pct],
+                      color="red", marker="*", s=220, edgecolor="black",
+                      label="Escolhida", zorder=5)
+        fig.colorbar(sc, ax=ax_fr, label="Sharpe")
+        ax_fr.set_xlabel("Volatilidade (% anual)")
+        ax_fr.set_ylabel("Retorno esp. (% anual)")
+        ax_fr.set_title("Fronteira eficiente (Monte Carlo)", fontsize=10)
+        ax_fr.legend(loc="best", fontsize=8)
+        ax_fr.grid(True, alpha=0.3)
+    else:
+        ax_fr.axis("off")
+        ax_fr.text(0.5, 0.5, "Fronteira eficiente indisponivel\n(metodo sem otimizacao)",
+                   ha="center", va="center", fontsize=9, color="gray")
+
+    fig.text(0.5, 0.005, DISCLAIMER, ha="center", fontsize=7, style="italic")
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     fig.savefig(path, dpi=120)
     plt.close(fig)
