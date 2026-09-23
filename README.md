@@ -6,7 +6,8 @@
 > dinheiro que estejas disposto a perder e, para decisões reais, fala com um
 > profissional certificado.
 
-`btcsim` simula a gestão de uma carteira de Bitcoin (por defeito **10 000 €**),
+`btcsim` simula a gestão de uma carteira de criptomoeda (por defeito **Bitcoin**,
+mas funciona com **qualquer cripto** — Ethereum, Solana, etc.) com **10 000 €**,
 testando várias estratégias de compra/venda sobre **dados históricos reais** e
 mostrando qual teria tido melhor desempenho — com métricas de risco e um gráfico.
 
@@ -15,18 +16,26 @@ A ideia central: em vez de tentar "adivinhar" quando comprar e vender, defines u
 
 ## Funcionalidades
 
-- **Dados reais** do preço do Bitcoin via API pública da CoinGecko (até 365 dias,
+- **Qualquer cripto** via `--coin` (ids da CoinGecko: `bitcoin`, `ethereum`,
+  `solana`, ...).
+- **Dados reais** do preço via API pública da CoinGecko (até 365 dias,
   o limite do plano gratuito) com cache em disco. Podes também usar o teu próprio
   CSV para históricos mais longos.
+- **Intervalo de análise:** **diário** (1 preço de fecho por dia). É a granularidade
+  usada para todos os cálculos e sinais; para *backtesting* é a mais robusta.
 - **Estratégias incluídas:**
   - `buy_and_hold` — compra tudo no início e mantém (o *benchmark*).
   - `dca` — *Dollar-Cost Averaging*: investe um valor fixo em intervalos regulares.
   - `ma_crossover` — cruzamento de médias móveis (compra/vende nos sinais).
   - `rsi` — compra em sobrevenda (RSI baixo), vende em sobrecompra (RSI alto).
-  - `sentiment` — reage a **sentimento de notícias** (módulo plugável).
-- **Análise de notícias plugável** (`btcsim/news.py`): stub neutro por defeito,
-  análise por palavras-chave a partir do teu CSV de manchetes, ou integração com
-  a API da CryptoPanic (para sentimento atual, requer `CRYPTOPANIC_TOKEN`).
+  - `sentiment` — reage a **sentimento de mercado/notícias** (módulo plugável),
+    com modo **contrário** opcional (comprar no medo, vender na ganância).
+- **Sentimento de mercado real e com histórico** via **Fear & Greed Index**
+  (`--news feargreed`): indicador 0–100 que agrega volatilidade, momentum, redes
+  sociais e tendências. Gratuito e sem chave.
+- **Análise de notícias plugável** (`btcsim/news.py`): índice Fear & Greed, stub
+  neutro, análise por palavras-chave a partir do teu CSV de manchetes, ou
+  integração com a API da CryptoPanic (sentimento atual, requer `CRYPTOPANIC_TOKEN`).
 - **Métricas de desempenho:** retorno total e anualizado, *max drawdown*,
   volatilidade, *Sharpe ratio*, número de trades e comissões pagas.
 - **Relatório em texto + gráfico PNG** comparando as estratégias.
@@ -71,6 +80,19 @@ Comparar **todas** as estratégias e gerar um gráfico:
 
 ```bash
 python3 -m btcsim --compare --chart output/compare.png
+```
+
+Outra cripto (ex.: Ethereum):
+
+```bash
+python3 -m btcsim --coin ethereum --compare --chart output/eth.png
+```
+
+Usar sentimento de mercado real (Fear & Greed) em modo **contrário** — comprar
+quando há medo, vender quando há ganância:
+
+```bash
+python3 -m btcsim --strategy sentiment --news feargreed --contrarian --sent-threshold 0.4
 ```
 
 Estratégia de cruzamento de médias móveis (SMA 20/50):
@@ -134,19 +156,31 @@ print(result.trades)
 
 Ver também `examples/run_demo.py`.
 
-## Sobre "ver notícias para decidir"
+## Sobre "acompanhar notícias/sentimento para decidir"
 
-Notícias históricas dia-a-dia não estão disponíveis de forma gratuita/fiável, por
-isso o sentimento é um **ponto de extensão** (`SentimentProvider` em
-`btcsim/news.py`):
+O sentimento é um **ponto de extensão** (`SentimentProvider` em `btcsim/news.py`).
+Todos devolvem uma pontuação diária em `[-1, 1]` (negativo = *bearish*, positivo = *bullish*):
 
-- **`NeutralProvider`** (por defeito): sentimento 0, não gera trades.
-- **`KeywordSentimentProvider`**: pontua manchetes que tu forneces (CSV).
+- **`FearGreedProvider`** (`--news feargreed`): índice **Medo & Ganância** do mercado
+  cripto (alternative.me). É **real, gratuito e com histórico**, por isso funciona em
+  *backtests*. Como é do mercado inteiro, aplica-se a qualquer cripto. Combina bem com
+  a estratégia de sentimento em **modo contrário** (`--contrarian`).
+- **`KeywordSentimentProvider`**: pontua manchetes que tu forneces (CSV `date,headline`).
 - **`CryptoPanicProvider`**: sentimento **atual** via CryptoPanic
   (`export CRYPTOPANIC_TOKEN=...`), útil para apoio à decisão no presente.
+- **`NeutralProvider`** (por defeito): sentimento 0, não gera trades.
 
-Podes escrever o teu próprio *provider* (ex.: modelo de NLP, outra API) implementando
-`daily_sentiment(index) -> pd.Series` com valores em `[-1, 1]`.
+Podes escrever o teu próprio *provider* (ex.: modelo de NLP sobre um feed de notícias,
+outra API) implementando `daily_sentiment(index) -> pd.Series` com valores em `[-1, 1]`.
+
+### Nota sobre notícias em tempo real e intervalos
+
+- **Intervalo de preço:** a análise é **diária**. Em janelas curtas a CoinGecko dá
+  dados horários, mas o motor de *backtest* usa diário para manter as métricas
+  (volatilidade, Sharpe) corretas e comparáveis.
+- **Notícias em texto ao minuto:** não há uma fonte histórica gratuita fiável de
+  manchetes ao minuto; por isso, para *backtesting* usa-se o Fear & Greed (histórico)
+  e, para o **presente**, podes ligar a CryptoPanic ou o teu próprio feed.
 
 ## Testes
 
