@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>btcsim — Simulador de Carteira Bitcoin</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <style>
+    :root {
+      --bg: #0f1720; --panel: #17212b; --panel2: #1e2a38;
+      --text: #e7edf3; --muted: #9fb0c0; --accent: #f7931a; --line: #2a3a4b;
+      --green: #2ecc71; --red: #e74c3c;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background: var(--bg); color: var(--text); }
+    header { padding: 18px 24px; border-bottom: 1px solid var(--line);
+             display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 18px; margin: 0; }
+    .badge { background: var(--accent); color: #1a1200; font-weight: 700;
+             border-radius: 6px; padding: 2px 8px; font-size: 13px; }
+    .wrap { display: grid; grid-template-columns: 300px 1fr; gap: 18px; padding: 18px 24px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+    input, select { width: 100%; padding: 8px 10px; border-radius: 8px;
+                    border: 1px solid var(--line); background: var(--panel2); color: var(--text); }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .chip { display: flex; align-items: center; gap: 6px; background: var(--panel2);
+            border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+    .chip input { width: auto; }
+    button { margin-top: 16px; width: 100%; padding: 11px; border: none; border-radius: 10px;
+             background: var(--accent); color: #1a1200; font-weight: 700; font-size: 15px; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #chart { width: 100%; height: 460px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+    th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { color: var(--muted); font-weight: 600; }
+    .pos { color: var(--green); } .neg { color: var(--red); }
+    .winner td { background: rgba(247,147,26,.10); font-weight: 600; }
+    .disclaimer { color: var(--muted); font-size: 12px; font-style: italic; padding: 8px 24px 24px; }
+    .kpis { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .kpi { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; flex: 1; min-width: 130px; }
+    .kpi .v { font-size: 20px; font-weight: 700; } .kpi .l { font-size: 11px; color: var(--muted); }
+    .muted { color: var(--muted); font-size: 12px; }
+    h3 { margin: 18px 0 4px; font-size: 14px; }
+    .err { color: var(--red); padding: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="badge">₿ btcsim</span>
+    <h1>Simulador de Carteira Bitcoin — dinheiro virtual</h1>
+  </header>
+
+  <div class="wrap">
+    <aside class="panel">
+      <label for="capital">Capital inicial</label>
+      <input id="capital" type="number" value="10000" min="1" step="100" />
+
+      <label for="currency">Moeda</label>
+      <select id="currency">
+        <option value="eur" selected>EUR (€)</option>
+        <option value="usd">USD ($)</option>
+        <option value="gbp">GBP (£)</option>
+      </select>
+
+      <label for="days">Período (dias, máx. 365)</label>
+      <input id="days" type="number" value="365" min="30" max="365" step="1" />
+
+      <label for="fee">Comissão por trade (%)</label>
+      <input id="fee" type="number" value="0.1" min="0" step="0.05" />
+
+      <label>Estratégias</label>
+      <div class="chips" id="chips">
+        {% for s in strategies %}
+        <label class="chip">
+          <input type="checkbox" value="{{ s }}"
+            {% if s in default_strategies %}checked{% endif %} /> {{ s }}
+        </label>
+        {% endfor %}
+      </div>
+
+      <label class="chip" style="margin-top:12px;">
+        <input type="checkbox" id="news" /> Usar notícias de exemplo (sentimento)
+      </label>
+
+      <button id="run">▶ Simular</button>
+      <p class="muted" style="margin-top:14px;">Dados reais via CoinGecko (em cache).
+        A estratégia <b>sentiment</b> só atua com uma fonte de notícias ligada.</p>
+    </aside>
+
+    <main>
+      <div class="kpis" id="kpis"></div>
+      <div class="panel">
+        <div id="chart"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Comparação de estratégias</h3>
+        <div id="tableWrap"><p class="muted">Carrega a simulação…</p></div>
+      </div>
+
+      <div class="panel">
+        <h3>Trades recentes</h3>
+        <div id="tradesWrap"><p class="muted">—</p></div>
+      </div>
+    </main>
+  </div>
+
+  <p class="disclaimer">{{ disclaimer }}</p>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const COLORS = { buy_and_hold:'#3498db', dca:'#f7931a', ma_crossover:'#2ecc71',
+                 rsi:'#e74c3c', sentiment:'#9b59b6' };
+
+function selectedStrategies() {
+  return [...document.querySelectorAll('#chips input:checked')].map(c => c.value);
+}
+function fmtMoney(v, cur) { return v.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2})+' '+cur; }
+function cls(v){ return v>=0 ? 'pos':'neg'; }
+function sign(v){ return (v>=0?'+':'')+v.toFixed(2); }
+
+async function run() {
+  const btn = $('run'); btn.disabled = true; btn.textContent = 'A calcular…';
+  const params = new URLSearchParams();
+  params.set('capital', $('capital').value);
+  params.set('currency', $('currency').value);
+  params.set('days', $('days').value);
+  params.set('fee', (parseFloat($('fee').value)/100).toString());
+  params.set('news', $('news').checked ? 'true':'false');
+  selectedStrategies().forEach(s => params.append('strategy', s));
+
+  try {
+    const resp = await fetch('/api/simulate?' + params.toString());
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    render(data);
+  } catch (e) {
+    $('tableWrap').innerHTML = '<p class="err">Erro: '+e.message+'</p>';
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Simular';
+  }
+}
+
+function render(d) {
+  const cur = d.currency;
+  const traces = [];
+  for (const [name, vals] of Object.entries(d.curves)) {
+    traces.push({ x: d.dates, y: vals, name, mode: 'lines',
+      line: { width: 2, color: COLORS[name] || undefined } });
+  }
+  traces.push({ x: d.dates, y: d.price, name: 'Preço BTC', yaxis: 'y2',
+    mode: 'lines', line: { width: 1, color: '#f7931a', dash: 'dot' }, opacity: .5 });
+
+  const layout = {
+    paper_bgcolor: '#17212b', plot_bgcolor: '#17212b',
+    font: { color: '#e7edf3', size: 12 },
+    margin: { t: 20, r: 60, b: 40, l: 70 },
+    legend: { orientation: 'h', y: 1.12 },
+    xaxis: { gridcolor: '#2a3a4b' },
+    yaxis: { title: 'Valor carteira ('+cur+')', gridcolor: '#2a3a4b' },
+    yaxis2: { title: 'BTC ('+cur+')', overlaying: 'y', side: 'right', showgrid: false },
+  };
+  Plotly.newPlot('chart', traces, layout, {responsive: true, displayModeBar: false});
+
+  const best = d.table[0];
+  const bh = d.table.find(r => r.strategy === 'buy_and_hold');
+  $('kpis').innerHTML = `
+    <div class="kpi"><div class="l">Capital inicial</div><div class="v">${fmtMoney(d.capital, cur)}</div></div>
+    <div class="kpi"><div class="l">Melhor estratégia</div><div class="v">${best.strategy}</div></div>
+    <div class="kpi"><div class="l">Valor final (melhor)</div><div class="v ${cls(best.return_pct)}">${fmtMoney(best.end_value, cur)}</div></div>
+    <div class="kpi"><div class="l">Retorno (melhor)</div><div class="v ${cls(best.return_pct)}">${sign(best.return_pct)}%</div></div>
+    <div class="kpi"><div class="l">Período</div><div class="v" style="font-size:14px">${d.period.start} → ${d.period.end}</div></div>`;
+
+  let rows = d.table.map((r,i) => `
+    <tr class="${i===0?'winner':''}">
+      <td>${r.strategy}</td>
+      <td>${fmtMoney(r.end_value, cur)}</td>
+      <td class="${cls(r.return_pct)}">${sign(r.return_pct)}%</td>
+      <td class="${cls(r.annualized_pct)}">${sign(r.annualized_pct)}%</td>
+      <td class="neg">${r.max_dd_pct.toFixed(2)}%</td>
+      <td>${r.volatility_pct.toFixed(1)}%</td>
+      <td>${r.sharpe.toFixed(2)}</td>
+      <td>${r.trades}</td>
+    </tr>`).join('');
+  $('tableWrap').innerHTML = `<table><thead><tr>
+      <th>Estratégia</th><th>Valor final</th><th>Retorno</th><th>Anualizado</th>
+      <th>Max DD</th><th>Volat.</th><th>Sharpe</th><th>Trades</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+
+  const names = Object.keys(d.trades);
+  let th = names.map(n => {
+    const ts = d.trades[n];
+    if (!ts.length) return '';
+    const items = ts.slice(-6).reverse().map(t =>
+      `<tr><td>${t.date}</td><td class="${t.side==='BUY'?'pos':'neg'}">${t.side}</td>
+       <td>${fmtMoney(t.price, cur)}</td><td>${t.units}</td><td style="text-align:left">${t.reason}</td></tr>`).join('');
+    return `<h3>${n}</h3><table><thead><tr><th>Data</th><th>Ação</th><th>Preço</th><th>BTC</th>
+            <th style="text-align:left">Motivo</th></tr></thead><tbody>${items}</tbody></table>`;
+  }).join('');
+  $('tradesWrap').innerHTML = th || '<p class="muted">Sem trades neste cenário.</p>';
+}
+
+$('run').addEventListener('click', run);
+window.addEventListener('load', run);
+</script>
+</body>
+</html>
