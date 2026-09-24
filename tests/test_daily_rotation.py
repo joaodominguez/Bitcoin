@@ -80,6 +80,25 @@ def test_decide_uses_daily_rotation(tmp_path: Path):
     assert any(p["asset"] == "AAPL" for p in decision["open_positions"])
 
 
+def test_anchor_costs_uses_prior_close_when_stuck_at_mark():
+    idx = pd.date_range("2024-01-01", periods=5, freq="D")
+    frame = pd.DataFrame({"MSFT": [100.0, 102.0, 101.0, 105.0, 110.0]}, index=idx)
+    book = {
+        "units": {"MSFT": 2.0},
+        "last_prices": {"MSFT": 110.0},
+        "cost_eur": {"MSFT": 110.0},  # stuck = today's mark
+    }
+    W._anchor_costs_to_prior_close(book, frame)
+    assert book["cost_eur"]["MSFT"] == 105.0  # yesterday
+    rows = W.open_positions(
+        book,
+        total_capital=10_000,
+        studies=[{"asset": "MSFT", "return_1d_pct": 4.76}],
+    )
+    assert rows[0]["pnl_eur"] == 10.0  # (110-105)*2
+    assert abs(rows[0]["day_pnl_eur"] - 10.49) < 0.1  # ~4.76% of 220
+
+
 def test_open_positions_lists_book_units_not_zero_sells():
     book = {
         "units": {"MSFT": 2.0, "bitcoin": 0.01},

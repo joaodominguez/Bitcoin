@@ -762,17 +762,57 @@ def _rebalance(
     return equity, fills
 
 
+def _anchor_costs_to_prior_close(book: dict, frame) -> None:
+    """When cost equals today's mark (init bug / same-day daily close), anchor to yesterday.
+
+    Daily OHLC data only moves once per day, so buying at today's close leaves
+    unrealized PnL stuck at 0 until tomorrow. Anchoring to the prior close makes
+    the open PnL reflect today's market move — what the desk should show.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return
+    units = book.get("units") or {}
+    prices = book.get("last_prices") or {}
+    costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
+    changed = False
+    for asset, qty in units.items():
+        if float(qty) <= 0:
+            continue
+        px = float(prices.get(asset) or 0.0)
+        if px <= 0 or asset not in frame.columns:
+            continue
+        series = frame[asset].dropna()
+        if len(series) < 2:
+            continue
+        prior = float(series.iloc[-2])
+        cur = float(series.iloc[-1])
+        avg = float(costs.get(asset) or px)
+        # Cost locked to today's print → no visible variation.
+        if abs(avg - px) / px < 1e-6 or abs(avg - cur) / cur < 1e-6:
+            costs[asset] = prior
+            changed = True
+        elif asset not in costs:
+            costs[asset] = prior
+            changed = True
+    if changed:
+        book["cost_eur"] = costs
+
+
 def open_positions(
     book: dict,
     *,
     total_capital: float,
     tape: dict | None = None,
     actions: list[dict] | None = None,
+    studies: list[dict] | None = None,
 ) -> list[dict]:
     """Real open lots for the desk cards (book units + BTC sleeve lots)."""
     by_action = {}
     for action in actions or []:
         by_action[str(action.get("asset") or "").lower()] = action
+    by_study = {}
+    for item in studies or []:
+        by_study[str(item.get("asset") or "").lower()] = item
 
     prices = book.get("last_prices") or {}
     costs = book.get("cost_eur") or {}
@@ -789,6 +829,9 @@ def open_positions(
         avg = float(costs.get(asset) or px)
         cost_basis = qty * avg
         pnl = value - cost_basis
+        study = by_study.get(str(asset).lower()) or {}
+        ret1 = study.get("return_1d_pct")
+        day_pnl = round(value * float(ret1) / 100.0, 2) if ret1 is not None else None
         act = by_action.get(str(asset).lower()) or {}
         rows.append({
             "asset": asset,
@@ -799,6 +842,8 @@ def open_positions(
             "cost_eur": round(cost_basis, 2),
             "pnl_eur": round(pnl, 2),
             "pnl_pct": round((pnl / cost_basis) * 100, 2) if cost_basis else 0.0,
+            "day_pnl_eur": day_pnl,
+            "return_1d_pct": ret1,
             "weight_pct": round((value / total_capital) * 100, 2) if total_capital else 0.0,
             "action": act.get("action") or "HOLD",
             "open": True,
@@ -808,6 +853,7 @@ def open_positions(
         spot_eur = None
         if tape.get("last_spot"):
             spot_eur = tape["last_spot"].get("eur")
+        btc_study = by_study.get("bitcoin") or {}
         for lot in tape.get("lots") or []:
             units_lot = float(lot.get("units") or 0)
             if units_lot <= 0:
@@ -816,6 +862,8 @@ def open_positions(
             spent = float(lot.get("spent_eur") or 0)
             value = units_lot * px
             pnl = value - spent
+            ret1 = btc_study.get("return_1d_pct")
+            day_pnl = round(value * float(ret1) / 100.0, 2) if ret1 is not None else None
             rows.append({
                 "asset": "bitcoin",
                 "origin": "sleeve_btc",
@@ -825,6 +873,8 @@ def open_positions(
                 "cost_eur": round(spent, 2),
                 "pnl_eur": round(pnl, 2),
                 "pnl_pct": round((pnl / spent) * 100, 2) if spent else 0.0,
+                "day_pnl_eur": day_pnl,
+                "return_1d_pct": ret1,
                 "weight_pct": round((value / total_capital) * 100, 2) if total_capital else 0.0,
                 "action": "HOLD",
                 "open": True,
@@ -931,6 +981,10 @@ def decide(
     fills: list[dict] = []
     with book_lock(path.parent):
         book = _load_book(path, capital)
+        # Merge latest marks before anchoring costs / equity.
+        if spot:
+            book["last_prices"] = {**book.get("last_prices", {}), **spot}
+        _anchor_costs_to_prior_close(book, frame)
         capital_atual = round(
             _equity(book, {**book.get("last_prices", {}), **spot}) + mark_to_market(path.parent),
             2,
@@ -951,6 +1005,7 @@ def decide(
         total_capital=capital_atual,
         tape=tape_state,
         actions=actions,
+        studies=studies,
     )
     decision = {
         "at": _now(),
@@ -960,6 +1015,10 @@ def decide(
         "cash_eur": round(float(book.get("cash") or 0.0), 2),
         "realized_pnl_eur": round(float(book.get("realized_pnl_eur") or 0.0), 2),
         "unrealized_pnl_eur": round(sum(float(p.get("pnl_eur") or 0) for p in positions), 2),
+        "day_pnl_eur": round(
+            sum(float(p["day_pnl_eur"]) for p in positions if p.get("day_pnl_eur") is not None),
+            2,
+        ),
         "previsao": previsao,
         "previsao_retorno_pct": exp_return_pct,
         "previsao_horizonte": "12 meses",

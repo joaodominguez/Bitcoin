@@ -911,15 +911,26 @@ function renderTopCards(positions, patterns, layout, actions) {
     const meta = assetInfo(p.asset);
     const key = String(p.asset || '').replace(/^stock:/i, '').toLowerCase();
     const pat = byName[key] || byName[String(p.asset || '').toLowerCase()];
-    const ret1 = pat && typeof pat.return_1d_pct === 'number' ? pat.return_1d_pct : null;
+    const ret1 = (typeof p.return_1d_pct === 'number')
+      ? p.return_1d_pct
+      : (pat && typeof pat.return_1d_pct === 'number' ? pat.return_1d_pct : null);
+    const dayPnl = (typeof p.day_pnl_eur === 'number')
+      ? p.day_pnl_eur
+      : (ret1 != null && p.amount != null ? Number(p.amount) * ret1 / 100 : null);
     const pnl = typeof p.pnl_eur === 'number' ? p.pnl_eur : null;
-    const pill = pnl != null
-      ? `<span class="${pnl >= 0 ? 'pill-up' : 'pill-down'}">${sign(pnl)} €</span>`
-      : (ret1 == null
-        ? `<span class="pill-hold">${ACTION_PT[p.action] || p.action || 'Manter'}</span>`
-        : `<span class="${ret1 >= 0 ? 'pill-up' : 'pill-down'}">${sign(ret1)}% 1d</span>`);
+    // Prefer today's € move; fall back to cost-basis PnL when day move is flat/unknown.
+    const show = (dayPnl != null && Math.abs(dayPnl) >= 0.005) ? dayPnl
+      : (pnl != null && Math.abs(pnl) >= 0.005 ? pnl : dayPnl);
+    const showLabel = (dayPnl != null && Math.abs(dayPnl) >= 0.005) ? '1d'
+      : (pnl != null && Math.abs(pnl) >= 0.005 ? 'PnL' : '1d');
+    const pill = show == null
+      ? `<span class="pill-hold">${ACTION_PT[p.action] || p.action || 'Manter'}</span>`
+      : `<span class="${show >= 0 ? 'pill-up' : 'pill-down'}">${sign(show)} € ${showLabel}</span>`;
     const origin = p.origin === 'sleeve_btc' ? 'sleeve BTC' : (pat && pat.class ? pat.class : (meta.area_pt || ''));
     const weight = Number(p.weight_pct != null ? p.weight_pct : p.weight_after_pct || 0);
+    const subVar = show == null
+      ? ''
+      : ` · ${show >= 0 ? '+' : ''}${show.toFixed(2)} € ${showLabel}`;
     return `<div class="card p-4 cursor-grab active:cursor-grabbing select-none" draggable="true" data-asset="${esc(p.asset)}">
       <div class="flex items-start justify-between gap-2">
         <div class="flex items-center gap-3 min-w-0">
@@ -933,8 +944,8 @@ function renderTopCards(positions, patterns, layout, actions) {
       </div>
       <div class="mono text-xl font-semibold mt-4">${fmtCompact(p.amount)}</div>
       <div class="flex items-center justify-between mt-1 text-[12px] text-slate-500">
-        <span>Peso ${weight.toFixed(1)}%</span>
-        <span class="${ACTION_CLASS[p.action] || ''}">${ACTION_PT[p.action] || p.action || 'Manter'}${pnl != null ? ' · ' + (pnl >= 0 ? '+' : '') + pnl.toFixed(0) + ' €' : ''}</span>
+        <span>Peso ${weight.toFixed(1)}%${ret1 != null ? ' · ' + sign(ret1) + '% 1d' : ''}</span>
+        <span class="${ACTION_CLASS[p.action] || ''}">${ACTION_PT[p.action] || p.action || 'Manter'}${subVar}</span>
       </div>
       <div class="wbar"><i style="width:${Math.min(100, weight)}%"></i></div>
     </div>`;
@@ -1178,7 +1189,7 @@ function renderWatch(list, decision, changes, tape, sources, equity, movements, 
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Inicial</div><div class="mono text-lg mt-1">${fmtCompact(inicial)} <span class="text-slate-500 text-sm">${cur}</span></div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Atual</div><div class="mono text-lg mt-1 ${cls(delta)}">${fmtCompact(atual)}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ</div><div class="mono text-lg mt-1 ${cls(delta)}">${sign(delta)} <span class="text-sm">(${sign(deltaPct)}%)</span></div></div>
-    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">PnL aberto</div><div class="mono text-lg mt-1 ${cls(Number(decision.unrealized_pnl_eur||0))}">${fmtCompact(Number(decision.unrealized_pnl_eur||0))}</div></div>
+    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ hoje</div><div class="mono text-lg mt-1 ${cls(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}">${fmtCompact(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">BTC spot</div><div class="mono text-lg mt-1">${spot}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Sleeve</div><div class="mono text-lg mt-1">${fmtCompact((tape && tape.cash_eur) || 0)} <span class="text-slate-500 text-sm">EUR</span></div></div>`;
 
