@@ -8,62 +8,78 @@
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
   <style>
     :root {
-      --bg: #0f1720; --panel: #17212b; --panel2: #1e2a38;
-      --text: #e7edf3; --muted: #9fb0c0; --accent: #f7931a; --line: #2a3a4b;
-      --green: #2ecc71; --red: #e74c3c;
+      --bg: #f3f0e8; --panel: #fffcf7; --panel2: #f7f4ee;
+      --text: #1c2430; --muted: #5e6a78; --accent: #1f6f6a; --accent-ink: #f7f4ee;
+      --line: #e2dcd0;
+      --green: #1f7a4d; --red: #a33b32;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    body { margin: 0; font-family: "Iowan Old Style", Palatino, Georgia, serif;
            background: var(--bg); color: var(--text); }
-    header { padding: 18px 24px; border-bottom: 1px solid var(--line);
-             display: flex; align-items: center; gap: 12px; }
-    header h1 { font-size: 18px; margin: 0; }
-    .badge { background: var(--accent); color: #1a1200; font-weight: 700;
-             border-radius: 6px; padding: 2px 8px; font-size: 13px; }
-    .wrap { display: grid; grid-template-columns: 300px 1fr; gap: 18px; padding: 18px 24px; }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-    label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
-    input, select { width: 100%; padding: 8px 10px; border-radius: 8px;
+    header { padding: 16px 28px; border-bottom: 1px solid var(--line);
+             display: flex; align-items: center; gap: 18px; background: var(--panel);
+             position: sticky; top: 0; z-index: 2; }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+    .brand strong { display: block; font-size: 16px; letter-spacing: .01em; }
+    .brand span { display: block; font-family: system-ui, sans-serif; font-size: 12px; color: var(--muted); }
+    .wrap { display: grid; grid-template-columns: 280px 1fr; gap: 18px; padding: 22px 28px 8px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+    .panel h3:first-child, .panel > h3 { margin-top: 0; }
+    label { display: block; font-family: system-ui, sans-serif; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+    input, select { width: 100%; padding: 8px 10px; border-radius: 8px; font-family: system-ui, sans-serif;
                     border: 1px solid var(--line); background: var(--panel2); color: var(--text); }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
     .chip { display: flex; align-items: center; gap: 6px; background: var(--panel2);
-            border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+            border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font-size: 13px; cursor: pointer;
+            font-family: system-ui, sans-serif; }
     .chip input { width: auto; }
     button { margin-top: 16px; width: 100%; padding: 11px; border: none; border-radius: 10px;
-             background: var(--accent); color: #1a1200; font-weight: 700; font-size: 15px; cursor: pointer; }
+             background: var(--accent); color: var(--accent-ink); font-weight: 650; font-size: 15px; cursor: pointer;
+             font-family: system-ui, sans-serif; }
     button:disabled { opacity: .6; cursor: wait; }
     #chart { width: 100%; height: 460px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
-    th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; font-family: system-ui, sans-serif; }
+    th, td { text-align: right; padding: 10px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
     th:first-child, td:first-child { text-align: left; }
-    thead th { color: var(--muted); font-weight: 600; }
+    thead th { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: .03em; text-transform: uppercase; }
     .pos { color: var(--green); } .neg { color: var(--red); }
-    .winner td { background: rgba(247,147,26,.10); font-weight: 600; }
-    .disclaimer { color: var(--muted); font-size: 12px; font-style: italic; padding: 8px 24px 24px; }
+    .winner td { background: rgba(31,111,106,.08); font-weight: 600; }
+    .disclaimer { color: var(--muted); font-size: 12px; padding: 8px 28px 28px; font-family: system-ui, sans-serif; }
     .kpis { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-    .kpi { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; flex: 1; min-width: 130px; }
-    .kpi .v { font-size: 20px; font-weight: 700; } .kpi .l { font-size: 11px; color: var(--muted); }
-    .muted { color: var(--muted); font-size: 12px; }
-    h3 { margin: 18px 0 4px; font-size: 14px; }
+    .kpi { background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; flex: 1; min-width: 140px; }
+    .kpi .v { font-size: 26px; font-weight: 650; letter-spacing: -.02em; } .kpi .l { font-family: system-ui, sans-serif; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .muted { color: var(--muted); font-size: 13px; font-family: system-ui, sans-serif; line-height: 1.45; }
+    h3 { margin: 18px 0 8px; font-size: 18px; font-weight: 650; }
     .err { color: var(--red); padding: 10px; }
-    .tabs { margin-left: auto; display: flex; gap: 8px; }
-    .tab { width: auto; margin: 0; padding: 8px 14px; background: var(--panel2);
-           color: var(--text); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
-    .tab.active { background: var(--accent); color: #1a1200; }
+    .tabs { margin-left: auto; display: flex; gap: 4px; }
+    .tab { width: auto; margin: 0; padding: 8px 12px; background: transparent;
+           color: var(--muted); border: none; border-radius: 8px; font-size: 14px; font-weight: 550; }
+    .tab.active { background: #e7f3f2; color: var(--accent); }
     .view { display: none; }
     .view.active { display: block; }
-    .logo { width: 28px; height: 28px; border-radius: 7px; display: block; }
+    .logo { width: 36px; height: 36px; border-radius: 10px; display: block; }
     .asset { display: inline-flex; align-items: center; gap: 8px; }
     .asset svg { width: 22px; height: 22px; flex: none; }
     .area { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
-            border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+            border-radius: 999px; padding: 1px 7px; white-space: nowrap; background: var(--panel2); }
+    a { color: var(--accent); }
+    @media (max-width: 860px) {
+      header { flex-wrap: wrap; padding: 14px 16px; }
+      .tabs { margin-left: 0; width: 100%; }
+      .wrap { grid-template-columns: 1fr; padding: 14px; }
+      .kpi .v { font-size: 22px; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <img class="logo" src="{{ url_for('static', filename='favicon.png') }}" alt="" />
-    <span class="badge">btcsim</span>
-    <h1>A minha carteira — dinheiro virtual</h1>
+    <div class="brand">
+      <img class="logo" src="{{ url_for('static', filename='favicon.png') }}" alt="" />
+      <div>
+        <strong>Carteira</strong>
+        <span>dinheiro virtual</span>
+      </div>
+    </div>
     <nav class="tabs">
       <button class="tab active" data-view="watch">A minha carteira</button>
       <button class="tab" data-view="strategies">Estratégias</button>
@@ -272,8 +288,14 @@ function assetCell(name) {
   const area = meta.area_pt ? `<span class="area">${meta.area_pt}</span>` : '';
   return `<span class="asset"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="${meta.color}"></circle><text x="16" y="21" text-anchor="middle" font-size="${size}" font-family="system-ui,sans-serif" font-weight="700" fill="#0f1720">${meta.mark}</text></svg><span>${meta.label}</span>${area}</span>`;
 }
-const COLORS = { buy_and_hold:'#3498db', dca:'#f7931a', ma_crossover:'#2ecc71',
-                 rsi:'#e74c3c', sentiment:'#9b59b6' };
+const COLORS = { buy_and_hold:'#2f5d8a', dca:'#1f6f6a', ma_crossover:'#1f7a4d',
+                 rsi:'#a33b32', sentiment:'#6b5b95' };
+const PLOT = {
+  paper_bgcolor: '#fffcf7', plot_bgcolor: '#fffcf7',
+  font: { color: '#1c2430', size: 12 },
+  xaxis: { gridcolor: '#e2dcd0' },
+  yaxis: { gridcolor: '#e2dcd0' },
+};
 
 function selectedStrategies() {
   return [...document.querySelectorAll('#chips input:checked')].map(c => c.value);
@@ -315,15 +337,13 @@ function render(d) {
       line: { width: 2, color: COLORS[name] || undefined } });
   }
   traces.push({ x: d.dates, y: d.price, name: 'Preço ' + asset, yaxis: 'y2',
-    mode: 'lines', line: { width: 1, color: '#f7931a', dash: 'dot' }, opacity: .5 });
+    mode: 'lines', line: { width: 1, color: '#1f6f6a', dash: 'dot' }, opacity: .7 });
 
   const layout = {
-    paper_bgcolor: '#17212b', plot_bgcolor: '#17212b',
-    font: { color: '#e7edf3', size: 12 },
+    ...PLOT,
     margin: { t: 20, r: 60, b: 40, l: 70 },
     legend: { orientation: 'h', y: 1.12 },
-    xaxis: { gridcolor: '#2a3a4b' },
-    yaxis: { title: 'Valor carteira ('+cur+')', gridcolor: '#2a3a4b' },
+    yaxis: { ...PLOT.yaxis, title: 'Valor carteira ('+cur+')' },
     yaxis2: { title: asset+' ('+cur+')', overlaying: 'y', side: 'right', showgrid: false },
   };
   Plotly.newPlot('chart', traces, layout, {responsive: true, displayModeBar: false});
@@ -424,9 +444,9 @@ async function runWalkForward(p) {
   Plotly.newPlot('a_wfChart', [
     { x: d.dates, y: d.oos_curve, name: d.method+' (OOS)', mode:'lines', line:{color:'#2ecc71', width:2} },
     { x: d.dates, y: d.equal_curve, name: 'peso igual', mode:'lines', line:{color:'#95a5a6', width:1.4, dash:'dash'} },
-  ], { paper_bgcolor:'#17212b', plot_bgcolor:'#17212b', font:{color:'#e7edf3'},
+  ], { ...PLOT,
        margin:{t:10,r:20,b:40,l:60}, legend:{orientation:'h', y:1.15},
-       xaxis:{gridcolor:'#2a3a4b'}, yaxis:{title:'Valor ('+cur+')', gridcolor:'#2a3a4b'} },
+       yaxis:{ ...PLOT.yaxis, title:'Valor ('+cur+')' } },
      {responsive:true, displayModeBar:false});
 }
 
@@ -447,17 +467,17 @@ function renderAlloc(d) {
     labels: d.allocation.map(a => a.ticker),
     values: d.allocation.map(a => a.weight_pct),
     textinfo: 'label+percent',
-    marker: { colors: ['#f7931a','#3498db','#2ecc71','#9b59b6','#e74c3c','#1abc9c'] },
-  }], { paper_bgcolor:'#17212b', font:{color:'#e7edf3'}, margin:{t:10,b:10,l:10,r:10},
+    marker: { colors: ['#1f6f6a','#2f5d8a','#1f7a4d','#6b5b95','#a33b32','#8a6a3b'] },
+  }], { paper_bgcolor:'#fffcf7', font:{color:'#1c2430'}, margin:{t:10,b:10,l:10,r:10},
         showlegend:false }, {responsive:true, displayModeBar:false});
 
   // Equity curve vs equal
   Plotly.newPlot('a_curve', [
     { x: d.dates, y: d.curve, name: d.method, mode:'lines', line:{color:'#2ecc71', width:2} },
     { x: d.dates, y: d.equal_curve, name: 'peso igual', mode:'lines', line:{color:'#95a5a6', width:1.4, dash:'dash'} },
-  ], { paper_bgcolor:'#17212b', plot_bgcolor:'#17212b', font:{color:'#e7edf3'},
+  ], { ...PLOT,
        margin:{t:10,r:20,b:40,l:60}, legend:{orientation:'h', y:1.15},
-       xaxis:{gridcolor:'#2a3a4b'}, yaxis:{title:'Valor ('+cur+')', gridcolor:'#2a3a4b'} },
+       yaxis:{ ...PLOT.yaxis, title:'Valor ('+cur+')' } },
      {responsive:true, displayModeBar:false});
 
   // Table
@@ -479,10 +499,10 @@ function renderAlloc(d) {
       { x:[d.exp_volatility_pct], y:[d.exp_return_pct], mode:'markers',
         marker:{ size:18, color:'#e74c3c', symbol:'star', line:{color:'#fff', width:1} },
         name:'escolhida' },
-    ], { paper_bgcolor:'#17212b', plot_bgcolor:'#17212b', font:{color:'#e7edf3'},
+    ], { ...PLOT,
          margin:{t:10,r:20,b:45,l:60}, legend:{orientation:'h', y:1.15},
-         xaxis:{title:'Volatilidade (% anual)', gridcolor:'#2a3a4b'},
-         yaxis:{title:'Retorno esp. (% anual)', gridcolor:'#2a3a4b'} },
+         xaxis:{ ...PLOT.xaxis, title:'Volatilidade (% anual)' },
+         yaxis:{ ...PLOT.yaxis, title:'Retorno esp. (% anual)' } },
        {responsive:true, displayModeBar:false});
   } else {
     $('a_frontier').innerHTML = '<p class="muted">Fronteira indisponível para este método.</p>';
