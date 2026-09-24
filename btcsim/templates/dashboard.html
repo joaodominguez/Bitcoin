@@ -56,15 +56,15 @@
 <body>
   <header>
     <span class="badge">₿ btcsim</span>
-    <h1>Simulador de Carteira de Cripto — dinheiro virtual</h1>
+    <h1>A minha carteira — dinheiro virtual</h1>
     <nav class="tabs">
-      <button class="tab active" data-view="strategies">Estratégias</button>
-      <button class="tab" data-view="allocate">Repartir capital (alocação)</button>
-      <button class="tab" data-view="watch">Watchlist</button>
+      <button class="tab active" data-view="watch">A minha carteira</button>
+      <button class="tab" data-view="strategies">Estratégias</button>
+      <button class="tab" data-view="allocate">Repartir capital</button>
     </nav>
   </header>
 
-  <div class="view active" id="view-strategies">
+  <div class="view" id="view-strategies">
   <div class="wrap">
     <aside class="panel">
       <label for="capital">Capital inicial</label>
@@ -209,26 +209,27 @@
   </div>
   </div>
 
-  <div class="view" id="view-watch">
+  <div class="view active" id="view-watch">
   <div class="wrap">
     <aside class="panel">
-      <h3 style="margin-top:0;">Autonomia virtual</h3>
-      <p class="muted">A plataforma pode ler notícias públicas, acrescentar cripto ou ações a esta lista e gravar a decisão seguinte. É dinheiro virtual. Não envia ordens reais.</p>
-      <p class="muted">No servidor, um processo repete isto a cada 6 horas. Aqui podes forçar uma passagem.</p>
-      <button id="w_run">▶ Ler notícias e decidir</button>
+      <h3 style="margin-top:0;">A tua carteira virtual</h3>
+      <p class="muted">Isto é o que a automação faria com 10 000 € virtuais. Não foi enviada nenhuma ordem a uma corretora.</p>
+      <p class="muted">A decisão junta duas coisas: notícias (entrar ou ficar de fora) e o padrão do preço (comprar, manter ou não perseguir).</p>
+      <button id="w_run">▶ Ler notícias outra vez</button>
     </aside>
     <main>
       <div class="panel">
-        <h3>Watchlist</h3>
-        <div id="w_list"><p class="muted">A abrir…</p></div>
+        <h3>O que eu faria agora</h3>
+        <div id="w_advice"><p class="muted">A carregar a carteira…</p></div>
       </div>
       <div class="panel">
-        <h3>O que a automação faria</h3>
-        <div id="w_advice"><p class="muted">Ainda sem leitura.</p></div>
-        <h3>Padrões lidos</h3>
-        <div id="w_patterns"><p class="muted">—</p></div>
-        <h3>Última decisão virtual</h3>
-        <div id="w_decision"><p class="muted">Ainda sem decisão.</p></div>
+        <h3>Posições — comprar, manter ou vender</h3>
+        <div id="w_decision"><p class="muted">A carregar…</p></div>
+      </div>
+      <div class="panel">
+        <h3>Porquê, com base nas notícias e no preço</h3>
+        <div id="w_list"><p class="muted">A carregar…</p></div>
+        <div id="w_patterns"></div>
       </div>
     </main>
   </div>
@@ -333,7 +334,8 @@ function render(d) {
 }
 
 $('run').addEventListener('click', run);
-window.addEventListener('load', run);
+let strategiesLoaded = false;
+window.addEventListener('load', loadWatch);
 
 // ---- Tab switching ----
 let allocLoaded = false;
@@ -344,6 +346,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.add('active');
     $('view-' + tab.dataset.view).classList.add('active');
     if (tab.dataset.view === 'allocate' && !allocLoaded) { allocLoaded = true; runAlloc(); }
+    if (tab.dataset.view === 'strategies' && !strategiesLoaded) { strategiesLoaded = true; run(); }
     if (tab.dataset.view === 'watch') loadWatch();
   });
 });
@@ -462,44 +465,49 @@ async function loadWatch() {
   renderWatch(d.watchlist, d.decision, null);
 }
 
+const ACTION_PT = { BUY: 'Comprar', SELL: 'Vender', HOLD: 'Manter' };
+
 function renderWatch(list, decision, changes) {
   const assets = (list && list.assets) || [];
-  const rows = assets.map(a => `<tr>
-    <td>${a.spec}</td>
-    <td class="${a.caution ? 'neg' : 'pos'}">${a.caution ? 'cautela' : 'ativa'}</td>
-    <td style="text-align:left">${a.reason || ''}</td>
-    <td style="text-align:left">${a.headline || ''}</td></tr>`).join('');
-  const extra = changes
-    ? `<p class="muted">Nesta passagem: +${(changes.added||[]).length} ativos, ${(changes.cautioned||[]).length} em cautela.</p>`
-    : '';
-  $('w_list').innerHTML = extra + (rows
-    ? `<table><thead><tr><th>Ativo</th><th>Estado</th><th style="text-align:left">Motivo</th><th style="text-align:left">Notícia</th></tr></thead><tbody>${rows}</tbody></table>`
-    : '<p class="muted">Lista vazia.</p>')
-    + (list && list.authorization ? `<p class="muted" style="margin-top:8px;">${list.authorization}</p>` : '');
-
   if (!decision) {
-    $('w_advice').innerHTML = '<p class="muted">Ainda sem leitura.</p>';
-    $('w_patterns').innerHTML = '<p class="muted">—</p>';
-    $('w_decision').innerHTML = '<p class="muted">Ainda sem decisão.</p>';
+    $('w_advice').innerHTML = '<p class="muted">Ainda não há decisão. Carrega em “Ler notícias outra vez”.</p>';
+    $('w_patterns').innerHTML = '';
+    $('w_decision').innerHTML = '<p class="muted">Ainda sem posições.</p>';
+    $('w_list').innerHTML = '';
     return;
   }
-  $('w_advice').innerHTML = `<p style="font-size:16px;line-height:1.45;">${decision.advice || decision.note || ''}</p>
-    <p class="muted">${decision.disclaimer || ''}</p>`;
-  const patterns = decision.patterns || [];
-  $('w_patterns').innerHTML = patterns.length ? `<table><thead><tr>
-      <th>Ativo</th><th>Tendência</th><th>RSI</th><th>30 dias</th><th style="text-align:left">Leitura</th>
-    </tr></thead><tbody>${patterns.map(p => `<tr>
-      <td>${p.asset}</td><td>${p.trend}</td><td>${p.rsi}</td>
-      <td class="${cls(p.return_30d_pct)}">${sign(p.return_30d_pct)}%</td>
-      <td style="text-align:left">${p.stance}</td></tr>`).join('')}</tbody></table>`
-    : '<p class="muted">Ainda sem padrões (faltam dias de histórico).</p>';
+  const when = (decision.at || '').replace('T', ' ').slice(0, 16);
+  $('w_advice').innerHTML = `<p style="font-size:18px;line-height:1.45;">${decision.advice || ''}</p>
+    <p class="muted">Atualizado em ${when} UTC. ${decision.disclaimer || ''}</p>`;
+
   const cur = decision.currency || 'EUR';
-  const acts = (decision.actions || []).map(a => `<tr>
-    <td>${a.asset}</td><td class="${a.action==='SELL'?'neg':a.action==='BUY'?'pos':''}">${a.action}</td>
-    <td>${a.weight_after_pct.toFixed(1)}%</td><td>${fmtMoney(a.amount, cur)}</td></tr>`).join('');
-  $('w_decision').innerHTML = `<p class="muted">${decision.note || ''} ${decision.disclaimer || ''}</p>
-    <table><thead><tr><th>Ativo</th><th>Ação</th><th>Peso</th><th>Valor virtual</th></tr></thead>
-    <tbody>${acts || '<tr><td colspan="4">Cash virtual</td></tr>'}</tbody></table>`;
+  const acts = (decision.actions || []).filter(a => a.weight_after_pct >= 0.5 || a.action === 'SELL').map(a => `<tr>
+    <td>${a.asset}</td>
+    <td class="${a.action==='SELL'?'neg':a.action==='BUY'?'pos':''}">${ACTION_PT[a.action] || a.action}</td>
+    <td>${fmtMoney(a.amount, cur)}</td>
+    <td>${a.weight_after_pct.toFixed(1)}%</td></tr>`).join('');
+  $('w_decision').innerHTML = `<table><thead><tr>
+      <th>Ativo</th><th>Decisão</th><th>Valor na carteira</th><th>Peso</th>
+    </tr></thead><tbody>${acts || '<tr><td colspan="4">Ficar em dinheiro, sem posições.</td></tr>'}</tbody></table>`;
+
+  const byName = {};
+  (decision.patterns || []).forEach(p => { byName[p.asset.toLowerCase()] = p; });
+  const newsRows = assets.map(a => {
+    const key = a.spec.replace('stock:', '').toLowerCase();
+    const pattern = byName[key];
+    return `<tr>
+      <td>${a.spec.replace('stock:', '')}</td>
+      <td class="${a.caution ? 'neg' : 'pos'}">${a.caution ? 'Ficar de fora' : 'Na carteira'}</td>
+      <td style="text-align:left">${pattern ? pattern.stance + ' — ' + pattern.trend + ', RSI ' + pattern.rsi : ''}</td>
+      <td style="text-align:left">${a.headline || a.reason || 'Sem notícia nova nesta passagem'}</td></tr>`;
+  }).join('');
+  const extra = changes
+    ? `<p class="muted">Nesta passagem: ${(changes.added||[]).length} ativos novos, ${(changes.cautioned||[]).length} postos de parte por notícia negativa.</p>`
+    : '';
+  $('w_list').innerHTML = extra + `<table><thead><tr>
+      <th>Ativo</th><th>Notícias</th><th style="text-align:left">Padrão do preço</th><th style="text-align:left">Notícia usada</th>
+    </tr></thead><tbody>${newsRows}</tbody></table>`;
+  $('w_patterns').innerHTML = '';
 }
 
 $('w_run').addEventListener('click', async () => {
