@@ -42,19 +42,29 @@ def _message(decision: dict) -> str:
     return body or "Decisão virtual registada."
 
 
-def send_decision(decision: dict) -> bool:
-    """Send one push. Returns True when ntfy accepts it."""
+def _post(title: str, message: str, tags: list[str]) -> bool:
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if not topic:
         return False
     base = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip("/")
     payload = {
         "topic": topic,
-        "title": "Carteira virtual — nova decisão",
-        "message": _message(decision),
-        "tags": ["chart"],
+        "title": title,
+        "message": message,
+        "tags": tags,
         "click": os.environ.get("DASHBOARD_URL", "http://91.99.167.243:8000"),
     }
     response = requests.post(base, json=payload, timeout=20)
     response.raise_for_status()
     return True
+
+
+def send_decision(decision: dict) -> bool:
+    """Send one push. Returns True when ntfy accepts it."""
+    return _post("Carteira virtual — nova decisão", _message(decision), ["chart"])
+
+
+def send_tape(event: dict) -> bool:
+    """Push one profitable Bitcoin round-trip or a dip buy."""
+    title = "Bitcoin — compra virtual" if event.get("side") == "BUY" else "Bitcoin — venda em lucro"
+    return _post(title, _message(event), ["bitcoin"])

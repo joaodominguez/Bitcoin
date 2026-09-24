@@ -14,11 +14,13 @@ State lives under ``state/`` (override with ``BTCSIM_STATE``):
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import time
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,6 +64,19 @@ def state_dir() -> Path:
     path = Path(os.environ.get("BTCSIM_STATE", "state"))
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+@contextmanager
+def book_lock(directory: Path):
+    """Exclusive lock so the hourly book and the intraday sleeve do not clobber each other."""
+    directory.mkdir(parents=True, exist_ok=True)
+    handle = (directory / "book.lock").open("a+")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def _now() -> str:
@@ -362,12 +377,23 @@ def _equity(book: dict, prices: dict[str, float]) -> float:
     return total
 
 
+def _breakeven(cost: float, fee_rate: float) -> float:
+    return float(cost) * (1 + fee_rate) / (1 - fee_rate)
+
+
 def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], fee_rate: float = 0.001) -> float:
-    """Move the virtual book to ``weights`` of its current value. Returns that value."""
+    """Move the virtual book to ``weights`` of its current value. Returns that value.
+
+    Bitcoin is not sold below its cost after fees. A falling price is held.
+    """
     merged = {**book.get("last_prices", {}), **prices}
     equity = _equity(book, merged)
     units = {k: float(v) for k, v in book.get("units", {}).items()}
     cash = float(book.get("cash", 0.0))
+    costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
+    for asset, qty in units.items():
+        if asset not in costs and merged.get(asset) and qty > 0:
+            costs[asset] = float(merged[asset])
     targets = {name: equity * float(weight) for name, weight in weights.items()}
 
     for asset, qty in list(units.items()):
@@ -377,9 +403,15 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
         target = targets.get(asset, 0.0)
         current = qty * px
         if current > target + 0.01:
+            if asset == "bitcoin":
+                cost = costs.get(asset)
+                if cost and px < _breakeven(cost, fee_rate):
+                    continue
             sell_val = current - target
             cash += sell_val * (1 - fee_rate)
             units[asset] = target / px if target > 0 else 0.0
+            if units[asset] <= 1e-10:
+                costs.pop(asset, None)
 
     for asset, target in targets.items():
         px = merged.get(asset)
@@ -388,12 +420,17 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
         current = units.get(asset, 0.0) * px
         if target > current + 0.01 and cash > 0:
             buy_val = min(target - current, cash / (1 + fee_rate))
+            old_units = units.get(asset, 0.0)
+            new_units = old_units + buy_val / px
+            old_cost = costs.get(asset, px)
+            costs[asset] = (old_units * old_cost + buy_val) / new_units
             cash -= buy_val * (1 + fee_rate)
-            units[asset] = units.get(asset, 0.0) + buy_val / px
+            units[asset] = new_units
 
     book["units"] = {k: v for k, v in units.items() if v > 1e-10}
     book["cash"] = cash
     book["last_prices"] = merged
+    book["cost_eur"] = {k: v for k, v in costs.items() if k in book["units"]}
     return equity
 
 
@@ -451,18 +488,24 @@ def decide(
     if decision_path.exists():
         previous = json.loads(decision_path.read_text(encoding="utf-8")).get("weights", {})
 
-    book = _load_book(path, capital)
     spot = _price_map(frame)
-    capital_atual = round(_equity(book, {**book.get("last_prices", {}), **spot}), 2)
     if exp_return_pct is None and studies:
         held = [item for item in studies if item["asset"] in weights]
         if held:
             exp_return_pct = round(
                 sum(item["return_30d_pct"] for item in held) / len(held) * 12, 2
             )
-    previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
-    _rebalance(book, weights, spot)
-    _save_book(path, book)
+    from .tape import mark_to_market
+
+    with book_lock(path.parent):
+        book = _load_book(path, capital)
+        capital_atual = round(
+            _equity(book, {**book.get("last_prices", {}), **spot}) + mark_to_market(path.parent),
+            2,
+        )
+        previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
+        _rebalance(book, weights, spot)
+        _save_book(path, book)
 
     decision = {
         "at": _now(),

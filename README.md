@@ -94,6 +94,8 @@ A dashboard fica em `http://IP-DO-SERVIDOR:8000`. O contentor reinicia sozinho s
 
 Um segundo processo, `watcher`, corre **de hora a hora**: lê notícias públicas, pode acrescentar cripto ou ações à watchlist, grava uma decisão virtual e envia uma notificação push (ntfy), se `NTFY_TOPIC` estiver definido no `.env`. Não envia ordens a nenhuma corretora.
 
+Um terceiro processo, `tape`, olha o preço do Bitcoin **de 15 em 15 minutos**. Compra fatias de 250 € virtuais nos patamares 80 000, 78 000, 76 000 e 74 000 USD (no máximo 1 500 €) e vende cada fatia só quando a operação fica em lucro depois das taxas. Se o preço continuar a cair, o lote fica aberto.
+
 - Define `DASHBOARD_PASSWORD` no `.env`. Sem password, qualquer pessoa que chegue à porta consegue usar a ferramenta e gastar o teu tráfego nas APIs de preços.
 - O servidor precisa de saída HTTPS (CoinGecko, Yahoo Finance e câmbio). Cerca de 512 MB de RAM chegam.
 - Para um endereço com HTTPS (ex.: `https://carteira.oteudominio.pt`), põe o Nginx ou o Caddy que já tenhas à frente da porta 8000. Não abras a porta 8000 diretamente à internet se puderes evitar.

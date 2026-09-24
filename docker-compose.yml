@@ -26,6 +26,18 @@ services:
       - btcsim-cache:/app/.cache
       - btcsim-state:/app/state
 
+  tape:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "btcsim.tape", "--loop", "--every-minutes", "15"]
+    environment:
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
+      NTFY_URL: ${NTFY_URL:-https://ntfy.sh}
+      DASHBOARD_URL: ${DASHBOARD_URL:-http://91.99.167.243:8000}
+    volumes:
+      - btcsim-cache:/app/.cache
+      - btcsim-state:/app/state
+
 volumes:
   btcsim-cache:
   btcsim-state:

@@ -223,6 +223,10 @@
         <div id="w_advice"><p class="muted">A carregar a carteira…</p></div>
       </div>
       <div class="panel">
+        <h3>Bitcoin ao longo do dia</h3>
+        <div id="w_tape"><p class="muted">A carregar…</p></div>
+      </div>
+      <div class="panel">
         <h3>Posições — comprar, manter ou vender</h3>
         <div id="w_decision"><p class="muted">A carregar…</p></div>
       </div>
@@ -462,12 +466,44 @@ $('a_run').addEventListener('click', runAlloc);
 async function loadWatch() {
   const resp = await fetch('/api/watch');
   const d = await resp.json();
-  renderWatch(d.watchlist, d.decision, null);
+  renderWatch(d.watchlist, d.decision, null, d.tape);
 }
 
 const ACTION_PT = { BUY: 'Comprar', SELL: 'Vender', HOLD: 'Manter' };
 
-function renderWatch(list, decision, changes) {
+function renderTape(tape) {
+  if (!tape) {
+    $('w_tape').innerHTML = '<p class="muted">Ainda sem leitura de preço.</p>';
+    return;
+  }
+  const spot = tape.spot_usd;
+  const spotLine = spot
+    ? `Agora: ${Math.round(spot).toLocaleString('pt-PT')} USD.`
+      + (spot > 80000 ? ' Ainda acima de 80 000, por isso não compro.' : ' No patamar de compra ou abaixo.')
+    : 'Ainda sem preço neste ciclo.';
+  const lots = (tape.open_lots || []).map(l =>
+    `<tr><td>${Math.round(l.level_usd).toLocaleString('pt-PT')} USD</td>
+     <td>${Math.round(l.price_usd).toLocaleString('pt-PT')} USD</td>
+     <td>${fmtMoney(l.spent_eur, 'EUR')}</td>
+     <td>desde ${Math.round(l.sell_from_usd).toLocaleString('pt-PT')} USD</td></tr>`).join('');
+  const trades = (tape.trades_today || []).map(t =>
+    `<tr><td>${(t.at || '').slice(11, 16)}</td>
+     <td class="${t.side==='SELL'?'pos':'pos'}">${t.side==='BUY'?'Comprei':'Vendi em lucro'}</td>
+     <td>${Math.round(t.price_usd).toLocaleString('pt-PT')} USD</td>
+     <td>${t.side==='SELL' ? fmtMoney(t.pnl_eur, 'EUR') : fmtMoney(t.spent_eur, 'EUR')}</td></tr>`).join('');
+  $('w_tape').innerHTML = `<p>${tape.rule || ''}</p>
+    <p class="muted">${spotLine} Reserva em cash: ${fmtMoney(tape.cash_eur || 0, 'EUR')}.
+    Lucro já fechado: ${fmtMoney(tape.realized_pnl_eur || 0, 'EUR')}.</p>
+    <h3>Lotes abertos</h3>
+    ${lots ? `<table><thead><tr><th>Patamar</th><th>Comprei a</th><th>Valor</th><th>Vendo</th></tr></thead><tbody>${lots}</tbody></table>`
+            : '<p class="muted">Nenhum lote aberto.</p>'}
+    <h3>Operações de hoje</h3>
+    ${trades ? `<table><thead><tr><th>Hora UTC</th><th>Ação</th><th>Preço</th><th>Valor</th></tr></thead><tbody>${trades}</tbody></table>`
+              : '<p class="muted">Ainda sem compras nem vendas hoje.</p>'}`;
+}
+
+function renderWatch(list, decision, changes, tape) {
+  renderTape(tape);
   const assets = (list && list.assets) || [];
   if (!decision) {
     $('w_advice').innerHTML = '<p class="muted">Ainda não há decisão. Carrega em “Ler notícias outra vez”.</p>';
@@ -528,7 +564,7 @@ $('w_run').addEventListener('click', async () => {
     if (d.error) throw new Error(d.error);
     const listResp = await fetch('/api/watch');
     const list = await listResp.json();
-    renderWatch(list.watchlist, d.decision, d.changes);
+    renderWatch(list.watchlist, d.decision, d.changes, list.tape);
   } catch (e) {
     $('w_decision').innerHTML = '<p class="err">Erro: '+e.message+'</p>';
   } finally {
