@@ -561,7 +561,14 @@ function esc(value) {
 
 function renderNews(list, sources) {
   const items = (list && list.recent_headlines) || [];
-  const rows = items.slice(0, 24).map(item =>
+  const buckets = new Map();
+  for (const item of items) {
+    const key = item.source || 'Outra';
+    if (!buckets.has(key)) buckets.set(key, []);
+    const bucket = buckets.get(key);
+    if (bucket.length < 3) bucket.push(item);
+  }
+  const rows = [...buckets.values()].flat().map(item =>
     `<tr><td style="text-align:left">${esc(item.title)}</td><td style="text-align:left">${esc(item.source)}</td></tr>`).join('');
   const links = (sources || []).map(s =>
     `<a href="${s.url}" target="_blank" rel="noopener">${s.name}</a>`).join(' · ');
