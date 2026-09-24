@@ -959,13 +959,19 @@ function movementsTableHtml(items, { compact = false } = {}) {
     const sideLabel = m.side_pt || ACTION_PT[side] || side;
     const origin = m.origin_pt || (m.origin === 'sleeve_btc' ? 'Sleeve BTC' : 'Carteira');
     const amount = fmtCompact(m.amount_eur || 0);
-    const qty = m.quantity != null ? Number(m.quantity).toLocaleString('pt-PT', { maximumFractionDigits: 6 }) : null;
-    const valueCell = qty ? `${qty} · ${amount}` : amount;
+    const qty = m.quantity != null
+      ? Number(m.quantity).toLocaleString('pt-PT', { maximumFractionDigits: 6 })
+      : null;
     let price = '—';
     if (m.price_usd != null) price = Math.round(m.price_usd).toLocaleString('pt-PT') + ' USD';
     else if (m.price_eur != null) price = fmtCompact(m.price_eur) + ' EUR';
-    else if (m.weight_after_pct != null) price = Number(m.weight_after_pct).toFixed(1) + '%';
-    const pnl = m.pnl_eur == null ? '—' : `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)}</span>`;
+    const weight = m.weight_after_pct != null
+      ? ` · ${Number(m.weight_after_pct).toFixed(1)}%`
+      : '';
+    const valueCell = qty ? `${qty} · ${amount}` : (amount + weight);
+    const pnl = m.pnl_eur == null
+      ? '—'
+      : `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)}</span>`;
     if (compact) {
       return `<tr>
         <td class="mono">${esc(fmtWhen(m.at).slice(0, 16))}</td>
