@@ -398,6 +398,12 @@ def cycle(
         save_tape(directory, tape)
         capitals = _capitals(directory, tape)
         try:
+            from .movements import record_tape_fills
+
+            record_tape_fills(directory, fills)
+        except Exception as exc:  # noqa: BLE001
+            print(f"movimentos falharam: {exc}")
+        try:
             from .history import record_equity
 
             record_equity(directory, capitals["capital_atual"], source="tape")

@@ -127,6 +127,11 @@
       font-size: 12px; cursor: pointer; color: #cbd5e1;
     }
     .chip input { width: auto; }
+    .m-filter.active {
+      border-color: rgba(45,212,191,.45);
+      color: #2dd4bf;
+      background: rgba(45,212,191,.1);
+    }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
       border: 1px solid #1e293b; border-radius: .65rem;
@@ -181,6 +186,10 @@
         <button class="nav-item active" data-view="watch" type="button">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
           Carteira
+        </button>
+        <button class="nav-item" data-view="movements" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h14"/><path d="M16 9l3 3-3 3"/></svg>
+          Movimentos
         </button>
         <button class="nav-item" data-view="strategies" type="button">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
@@ -261,12 +270,15 @@
 
           <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-5">
             <section class="card xl:col-span-2 overflow-hidden">
-              <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-800">
                 <div>
-                  <h2 class="text-base font-semibold">Últimas transações</h2>
-                  <p class="text-[12px] text-slate-500">Ações da decisão e fills do tape</p>
+                  <h2 class="text-base font-semibold">Movimentos recentes</h2>
+                  <p class="text-[12px] text-slate-500">Carteira + sleeve BTC · ver tudo em Movimentos</p>
                 </div>
-                <span class="text-[12px] text-slate-500" id="w_tx_count"></span>
+                <div class="flex items-center gap-2">
+                  <span class="text-[12px] text-slate-500" id="w_tx_count"></span>
+                  <button class="btn text-[12px] px-2.5 py-1" type="button" data-view="movements">Ver todos</button>
+                </div>
               </div>
               <div class="overflow-x-auto" id="w_transactions">
                 <div class="p-5 muted text-sm">A carregar…</div>
@@ -300,6 +312,31 @@
               <div id="w_patterns"></div>
             </section>
           </div>
+        </div>
+
+        <!-- MOVEMENTS -->
+        <div class="view" id="view-movements">
+          <section class="card overflow-hidden">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4 border-b border-slate-800">
+              <div>
+                <h2 class="text-base font-semibold">Histórico de movimentos</h2>
+                <p class="text-[12px] text-slate-500">Todas as compras, vendas e manter (carteira e sleeve BTC)</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2" id="m_filters">
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter active" data-origin="">Todos</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-origin="carteira">Carteira</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-origin="sleeve_btc">Sleeve BTC</button>
+                <span class="text-[12px] text-slate-500 ml-1" id="m_count"></span>
+              </div>
+            </div>
+            <div class="overflow-x-auto" id="m_table">
+              <div class="p-5 muted text-sm">A carregar…</div>
+            </div>
+            <div class="flex items-center justify-between gap-3 px-5 py-3 border-t border-slate-800">
+              <p class="text-[11px] text-slate-500" id="m_note">Dinheiro virtual apenas.</p>
+              <button class="btn text-[12px] px-2.5 py-1" type="button" id="m_more">Carregar mais</button>
+            </div>
+          </section>
         </div>
 
         <!-- STRATEGIES -->
@@ -457,6 +494,7 @@ function esc(value) {
 
 const PAGE = {
   watch: { title: 'Mercado', sub: 'Posições, desempenho e tape' },
+  movements: { title: 'Movimentos', sub: 'Histórico completo de compras e vendas' },
   strategies: { title: 'Estratégias', sub: 'Simular curvas e métricas' },
   allocate: { title: 'Alocação', sub: 'Otimizar pesos da carteira' },
 };
@@ -560,12 +598,16 @@ function render(d) {
 $('run').addEventListener('click', run);
 let strategiesLoaded = false;
 let allocLoaded = false;
-document.querySelectorAll('.nav-item').forEach(tab => {
+let movementsLoaded = false;
+document.querySelectorAll('[data-view]').forEach(tab => {
   tab.addEventListener('click', () => {
-    setView(tab.dataset.view);
-    if (tab.dataset.view === 'allocate' && !allocLoaded) { allocLoaded = true; runAlloc(); }
-    if (tab.dataset.view === 'strategies' && !strategiesLoaded) { strategiesLoaded = true; run(); }
-    if (tab.dataset.view === 'watch') loadWatch();
+    const name = tab.dataset.view;
+    if (!PAGE[name]) return;
+    setView(name);
+    if (name === 'allocate' && !allocLoaded) { allocLoaded = true; runAlloc(); }
+    if (name === 'strategies' && !strategiesLoaded) { strategiesLoaded = true; run(); }
+    if (name === 'watch') loadWatch();
+    if (name === 'movements') { movementsLoaded = true; loadMovements({ reset: true }); }
   });
 });
 
@@ -669,7 +711,7 @@ async function loadWatch() {
     if (!resp.ok) return;
     const d = await resp.json();
     if (!$('view-watch').classList.contains('active')) return;
-    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity);
+    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements);
   } catch (e) {
   } finally {
     watchLoading = false;
@@ -900,48 +942,114 @@ function renderWatchlistSide(assets, patterns) {
   $('w_watchlist').innerHTML = rows || '<span class="muted text-sm">Lista vazia.</span>';
 }
 
-function renderTransactions(decision, tape) {
-  const rows = [];
-  const when = (decision && decision.at) || '';
-  (decision && decision.actions || []).forEach(a => {
-    rows.push({
-      name: `${ACTION_PT[a.action] || a.action} ${assetInfo(a.asset).mark}`,
-      date: when.replace('T', ' ').slice(0, 16),
-      price: a.amount,
-      category: assetInfo(a.asset).area_pt || 'Ativo',
-      status: a.action,
-      statusClass: ACTION_PILL[a.action] || 'pill-hold',
-      statusLabel: ACTION_PT[a.action] || a.action,
-    });
-  });
-  (tape && tape.trades_today || []).forEach(t => {
-    rows.push({
-      name: `${t.side} BTC`,
-      date: (t.at || '').replace('T', ' ').slice(0, 16),
-      price: t.side === 'SELL' ? t.pnl_eur : t.spent_eur,
-      category: 'Bitcoin sleeve',
-      status: t.side,
-      statusClass: t.side === 'SELL' ? 'pill-down' : 'pill-up',
-      statusLabel: t.side,
-    });
-  });
-  $('w_tx_count').textContent = rows.length ? rows.length + ' linhas' : '';
-  if (!rows.length) {
-    $('w_transactions').innerHTML = '<div class="p-5 muted text-sm">Sem transações.</div>';
-    return;
-  }
-  $('w_transactions').innerHTML = `<table class="dense"><thead><tr>
-      <th>Nome</th><th>Data</th><th>Valor</th><th>Categoria</th><th>Estado</th>
-    </tr></thead><tbody>${rows.map(r => `<tr>
-      <td>${esc(r.name)}</td>
-      <td class="mono">${esc(r.date || '—')}</td>
-      <td class="mono">${fmtCompact(r.price || 0)}</td>
-      <td>${esc(r.category)}</td>
-      <td><span class="${r.statusClass}">${esc(r.statusLabel)}</span></td>
-    </tr>`).join('')}</tbody></table>`;
+function fmtWhen(iso) {
+  if (!iso) return '—';
+  return String(iso).replace('T', ' ').replace('+00:00', ' UTC').slice(0, 19);
 }
 
-function renderWatch(list, decision, changes, tape, sources, equity) {
+function movementsTableHtml(items, { compact = false } = {}) {
+  if (!items || !items.length) {
+    return '<div class="p-5 muted text-sm">Sem movimentos.</div>';
+  }
+  const head = compact
+    ? `<thead><tr><th>Data</th><th>Lado</th><th>Ativo</th><th>Valor</th><th>Origem</th></tr></thead>`
+    : `<thead><tr><th>Data/hora</th><th>Lado</th><th>Ativo</th><th>Qtd / EUR</th><th>Preço</th><th>Origem</th><th>PnL</th></tr></thead>`;
+  const body = items.map(m => {
+    const side = m.side || '';
+    const sideLabel = m.side_pt || ACTION_PT[side] || side;
+    const origin = m.origin_pt || (m.origin === 'sleeve_btc' ? 'Sleeve BTC' : 'Carteira');
+    const amount = fmtCompact(m.amount_eur || 0);
+    const qty = m.quantity != null
+      ? Number(m.quantity).toLocaleString('pt-PT', { maximumFractionDigits: 6 })
+      : null;
+    let price = '—';
+    if (m.price_usd != null) price = Math.round(m.price_usd).toLocaleString('pt-PT') + ' USD';
+    else if (m.price_eur != null) price = fmtCompact(m.price_eur) + ' EUR';
+    const weight = m.weight_after_pct != null
+      ? ` · ${Number(m.weight_after_pct).toFixed(1)}%`
+      : '';
+    const valueCell = qty ? `${qty} · ${amount}` : (amount + weight);
+    const pnl = m.pnl_eur == null
+      ? '—'
+      : `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)}</span>`;
+    if (compact) {
+      return `<tr>
+        <td class="mono">${esc(fmtWhen(m.at).slice(0, 16))}</td>
+        <td><span class="${ACTION_PILL[side] || 'pill-hold'}">${esc(sideLabel)}</span></td>
+        <td>${assetCell(m.asset || '—', 20)}</td>
+        <td class="mono">${amount}</td>
+        <td class="text-slate-400">${esc(origin)}</td>
+      </tr>`;
+    }
+    return `<tr>
+      <td class="mono">${esc(fmtWhen(m.at))}</td>
+      <td><span class="${ACTION_PILL[side] || 'pill-hold'}">${esc(sideLabel)}</span></td>
+      <td>${assetCell(m.asset || '—', 22)}</td>
+      <td class="mono">${esc(valueCell)}</td>
+      <td class="mono">${price}</td>
+      <td class="text-slate-400">${esc(origin)}</td>
+      <td class="mono">${pnl}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="dense">${head}<tbody>${body}</tbody></table>`;
+}
+
+function renderTransactions(movementsPayload) {
+  const items = (movementsPayload && movementsPayload.items) || [];
+  const total = (movementsPayload && movementsPayload.total) || items.length;
+  $('w_tx_count').textContent = total ? total + ' no histórico' : '';
+  $('w_transactions').innerHTML = movementsTableHtml(items.slice(0, 12), { compact: true });
+}
+
+let movementsState = { origin: '', offset: 0, limit: 100, items: [], total: 0, loading: false };
+
+async function loadMovements({ reset = false } = {}) {
+  if (movementsState.loading) return;
+  if (reset) {
+    movementsState.offset = 0;
+    movementsState.items = [];
+  }
+  movementsState.loading = true;
+  try {
+    const p = new URLSearchParams();
+    p.set('limit', String(movementsState.limit));
+    p.set('offset', String(movementsState.offset));
+    if (movementsState.origin) p.set('origin', movementsState.origin);
+    const resp = await fetch('/api/movements?' + p.toString());
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const d = await resp.json();
+    if (d.error) throw new Error(d.error);
+    const batch = d.items || [];
+    movementsState.items = reset ? batch : movementsState.items.concat(batch);
+    movementsState.total = d.total || movementsState.items.length;
+    movementsState.offset = movementsState.items.length;
+    $('m_count').textContent = movementsState.total
+      ? `${movementsState.items.length} / ${movementsState.total}`
+      : '0';
+    $('m_note').textContent = d.note || 'Dinheiro virtual apenas.';
+    $('m_table').innerHTML = movementsTableHtml(movementsState.items);
+    const more = $('m_more');
+    if (more) more.style.display = movementsState.items.length < movementsState.total ? '' : 'none';
+  } catch (e) {
+    $('m_table').innerHTML = `<div class="p-5 err text-sm">Erro: ${esc(e.message)}</div>`;
+  } finally {
+    movementsState.loading = false;
+  }
+}
+
+document.querySelectorAll('.m-filter').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.m-filter').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    movementsState.origin = btn.dataset.origin || '';
+    loadMovements({ reset: true });
+  });
+});
+if ($('m_more')) {
+  $('m_more').addEventListener('click', () => loadMovements({ reset: false }));
+}
+
+function renderWatch(list, decision, changes, tape, sources, equity, movements) {
   renderTape(tape);
   renderNews(list, sources);
   const assets = (list && list.assets) || [];
@@ -960,7 +1068,7 @@ function renderWatch(list, decision, changes, tape, sources, equity) {
     $('w_decision').innerHTML = '<div class="muted text-sm">Sem posições.</div>';
     $('w_list').innerHTML = '';
     $('w_watchlist').innerHTML = '<span class="muted text-sm">—</span>';
-    $('w_transactions').innerHTML = '<div class="p-5 muted text-sm">—</div>';
+    renderTransactions(movements);
     renderPerfChart(0, 0, 0, 'EUR', equity);
     return;
   }
@@ -988,7 +1096,7 @@ function renderWatch(list, decision, changes, tape, sources, equity) {
   renderPerfChart(inicial, atual, previsao, cur, equity);
   renderTopCards(decision.actions || [], decision.patterns || []);
   renderWatchlistSide(assets, decision.patterns || []);
-  renderTransactions(decision, tape);
+  renderTransactions(movements);
 
   const acts = (decision.actions || []).filter(a => a.weight_after_pct >= 0.5 || a.action === 'SELL');
   $('w_pos_count').textContent = acts.length + ' linhas';
@@ -1032,7 +1140,7 @@ $('w_run').addEventListener('click', async () => {
     if (d.error) throw new Error(d.error);
     const listResp = await fetch('/api/watch');
     const list = await listResp.json();
-    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity);
+    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements);
   } catch (e) {
     $('w_decision').innerHTML = '<div class="err text-sm">Erro: '+e.message+'</div>';
   } finally {
