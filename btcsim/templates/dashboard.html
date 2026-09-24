@@ -321,12 +321,13 @@
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4 border-b border-slate-800">
               <div>
                 <h2 class="text-base font-semibold">Histórico de movimentos</h2>
-                <p class="text-[12px] text-slate-500">Todas as compras, vendas e manter (carteira e sleeve BTC)</p>
+                <p class="text-[12px] text-slate-500">Preço e PnL nas compras/vendas — «Manter» é só peso em aberto</p>
               </div>
               <div class="flex flex-wrap items-center gap-2" id="m_filters">
-                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter active" data-origin="">Todos</button>
-                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-origin="carteira">Carteira</button>
-                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-origin="sleeve_btc">Sleeve BTC</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter active" data-side="BUY,SELL" data-origin="">Compras/Vendas</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-side="" data-origin="">Todos</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-side="" data-origin="carteira">Carteira</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-side="" data-origin="sleeve_btc">Sleeve BTC</button>
                 <span class="text-[12px] text-slate-500 ml-1" id="m_count"></span>
               </div>
             </div>
@@ -1025,7 +1026,7 @@ function movementsTableHtml(items, { compact = false } = {}) {
     return '<div class="p-5 muted text-sm">Sem movimentos.</div>';
   }
   const head = compact
-    ? `<thead><tr><th>Data</th><th>Lado</th><th>Ativo</th><th>Valor</th><th>Origem</th></tr></thead>`
+    ? `<thead><tr><th>Data</th><th>Lado</th><th>Ativo</th><th>Valor</th><th>Preço</th><th>PnL</th></tr></thead>`
     : `<thead><tr><th>Data/hora</th><th>Lado</th><th>Ativo</th><th>Qtd / EUR</th><th>Preço</th><th>Origem</th><th>PnL</th></tr></thead>`;
   const body = items.map(m => {
     const side = m.side || '';
@@ -1036,22 +1037,31 @@ function movementsTableHtml(items, { compact = false } = {}) {
       ? Number(m.quantity).toLocaleString('pt-PT', { maximumFractionDigits: 6 })
       : null;
     let price = '—';
-    if (m.price_usd != null) price = Math.round(m.price_usd).toLocaleString('pt-PT') + ' USD';
-    else if (m.price_eur != null) price = fmtCompact(m.price_eur) + ' EUR';
+    if (m.price_eur != null) price = fmtCompact(m.price_eur) + ' EUR';
+    else if (m.price_usd != null) price = Math.round(m.price_usd).toLocaleString('pt-PT') + ' USD';
     const weight = m.weight_after_pct != null
       ? ` · ${Number(m.weight_after_pct).toFixed(1)}%`
       : '';
-    const valueCell = qty ? `${qty} · ${amount}` : (amount + weight);
-    const pnl = m.pnl_eur == null
-      ? '—'
-      : `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)}</span>`;
+    const valueCell = qty ? `${qty} u · ${amount}` : (amount + weight);
+    let pnl;
+    if (side === 'HOLD') {
+      pnl = '<span class="text-slate-500">—</span>';
+    } else if (side === 'BUY') {
+      pnl = '<span class="text-slate-500">aberto</span>';
+    } else if (m.pnl_eur == null) {
+      pnl = '<span class="text-slate-500">s/ hist.</span>';
+    } else {
+      const label = Number(m.pnl_eur) >= 0 ? 'lucro' : 'prejuízo';
+      pnl = `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)} <span class="text-[10px] uppercase">${label}</span></span>`;
+    }
     if (compact) {
       return `<tr>
         <td class="mono">${esc(fmtWhen(m.at).slice(0, 16))}</td>
         <td><span class="${ACTION_PILL[side] || 'pill-hold'}">${esc(sideLabel)}</span></td>
         <td>${assetCell(m.asset || '—', 20)}</td>
         <td class="mono">${amount}</td>
-        <td class="text-slate-400">${esc(origin)}</td>
+        <td class="mono text-[12px]">${price}</td>
+        <td class="mono">${pnl}</td>
       </tr>`;
     }
     return `<tr>
@@ -1074,7 +1084,7 @@ function renderTransactions(movementsPayload) {
   $('w_transactions').innerHTML = movementsTableHtml(items.slice(0, 12), { compact: true });
 }
 
-let movementsState = { origin: '', offset: 0, limit: 100, items: [], total: 0, loading: false };
+let movementsState = { origin: '', side: 'BUY,SELL', offset: 0, limit: 100, items: [], total: 0, loading: false };
 
 async function loadMovements({ reset = false } = {}) {
   if (movementsState.loading) return;
@@ -1088,6 +1098,7 @@ async function loadMovements({ reset = false } = {}) {
     p.set('limit', String(movementsState.limit));
     p.set('offset', String(movementsState.offset));
     if (movementsState.origin) p.set('origin', movementsState.origin);
+    if (movementsState.side) p.set('side', movementsState.side);
     const resp = await fetch('/api/movements?' + p.toString());
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
@@ -1115,6 +1126,7 @@ document.querySelectorAll('.m-filter').forEach(btn => {
     document.querySelectorAll('.m-filter').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     movementsState.origin = btn.dataset.origin || '';
+    movementsState.side = btn.dataset.side || '';
     loadMovements({ reset: true });
   });
 });

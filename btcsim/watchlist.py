@@ -372,8 +372,16 @@ def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dic
     return summary
 
 
-def _actions(previous: dict[str, float], target: dict[str, float], capital: float) -> list[dict]:
+def _actions(
+    previous: dict[str, float],
+    target: dict[str, float],
+    capital: float,
+    prices: dict[str, float] | None = None,
+    fills: list[dict] | None = None,
+) -> list[dict]:
     names = sorted(set(previous) | set(target))
+    prices = prices or {}
+    by_fill = {(f.get("asset"), f.get("side")): f for f in (fills or [])}
     actions = []
     for name in names:
         before = float(previous.get(name, 0.0))
@@ -389,12 +397,23 @@ def _actions(previous: dict[str, float], target: dict[str, float], capital: floa
             side = "SELL"
         else:
             side = "HOLD"
+        fill = by_fill.get((name, side)) or {}
+        px = fill.get("price_eur")
+        if px is None:
+            px = prices.get(name)
+        traded = fill.get("amount_eur")
+        if traded is None and side in {"BUY", "SELL"}:
+            traded = round(abs(delta) * capital, 2)
         actions.append({
             "asset": name,
             "action": side,
             "weight_before_pct": round(before * 100, 2),
             "weight_after_pct": round(after * 100, 2),
             "amount": round(after * capital, 2),
+            "traded_eur": traded,
+            "price_eur": round(float(px), 4) if px is not None else None,
+            "quantity": fill.get("units"),
+            "pnl_eur": fill.get("pnl_eur"),
         })
     return actions
 
@@ -657,10 +676,17 @@ def _breakeven(cost: float, fee_rate: float) -> float:
     return float(cost) * (1 + fee_rate) / (1 - fee_rate)
 
 
-def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], fee_rate: float = 0.001) -> float:
-    """Move the virtual book to ``weights`` of its current value. Returns that value.
+def _rebalance(
+    book: dict,
+    weights: dict[str, float],
+    prices: dict[str, float],
+    fee_rate: float = 0.001,
+) -> tuple[float, list[dict]]:
+    """Move the virtual book to ``weights``. Returns (equity_before, fills).
 
-    Bitcoin is not sold below its cost after fees. A falling price is held.
+    Each fill carries price, quantity, notional and (on sells) realized PnL so
+    the movements ledger can show lucro/prejuízo clearly. Bitcoin is not sold
+    below its cost after fees.
     """
     merged = {**book.get("last_prices", {}), **prices}
     equity = _equity(book, merged)
@@ -668,6 +694,7 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
     cash = float(book.get("cash", 0.0))
     costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
     realized = float(book.get("realized_pnl_eur") or 0.0)
+    fills: list[dict] = []
     for asset, qty in units.items():
         if asset not in costs and merged.get(asset) and qty > 0:
             costs[asset] = float(merged[asset])
@@ -688,11 +715,21 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
             sold_units = sell_val / px
             avg_cost = float(costs.get(asset, px))
             proceeds = sell_val * (1 - fee_rate)
-            realized += proceeds - sold_units * avg_cost
+            pnl = proceeds - sold_units * avg_cost
+            realized += pnl
             cash += proceeds
             units[asset] = target / px if target > 0 else 0.0
             if units[asset] <= 1e-10:
                 costs.pop(asset, None)
+            fills.append({
+                "side": "SELL",
+                "asset": asset,
+                "units": sold_units,
+                "price_eur": float(px),
+                "amount_eur": round(proceeds, 2),
+                "pnl_eur": round(pnl, 2),
+                "cost_eur": round(sold_units * avg_cost, 2),
+            })
 
     for asset, target in targets.items():
         px = merged.get(asset)
@@ -707,13 +744,22 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
             costs[asset] = (old_units * old_cost + buy_val) / new_units
             cash -= buy_val * (1 + fee_rate)
             units[asset] = new_units
+            fills.append({
+                "side": "BUY",
+                "asset": asset,
+                "units": buy_val / px,
+                "price_eur": float(px),
+                "amount_eur": round(buy_val * (1 + fee_rate), 2),
+                "pnl_eur": None,
+                "cost_eur": round(buy_val, 2),
+            })
 
     book["units"] = {k: v for k, v in units.items() if v > 1e-10}
     book["cash"] = cash
     book["last_prices"] = merged
     book["cost_eur"] = {k: v for k, v in costs.items() if k in book["units"]}
     book["realized_pnl_eur"] = round(realized, 2)
-    return equity
+    return equity, fills
 
 
 def open_positions(
@@ -882,6 +928,7 @@ def decide(
             )
     from .tape import load_tape, mark_to_market
 
+    fills: list[dict] = []
     with book_lock(path.parent):
         book = _load_book(path, capital)
         capital_atual = round(
@@ -889,7 +936,7 @@ def decide(
             2,
         )
         previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
-        _rebalance(book, weights, spot)
+        _equity_before, fills = _rebalance(book, weights, spot)
         capital_atual = round(
             _equity(book, book.get("last_prices") or {}) + mark_to_market(path.parent),
             2,
@@ -898,7 +945,7 @@ def decide(
         _save_book(path, book)
         tape_state = load_tape(path.parent)
 
-    actions = _actions(previous, weights, capital_atual)
+    actions = _actions(previous, weights, capital_atual, prices=spot, fills=fills)
     positions = open_positions(
         book,
         total_capital=capital_atual,
@@ -923,6 +970,17 @@ def decide(
         "weights": {k: round(v, 4) for k, v in weights.items()},
         "cautious": cautious,
         "actions": actions,
+        "fills": [
+            {
+                "side": f["side"],
+                "asset": f["asset"],
+                "units": round(float(f["units"]), 8),
+                "price_eur": round(float(f["price_eur"]), 4),
+                "amount_eur": f["amount_eur"],
+                "pnl_eur": f.get("pnl_eur"),
+            }
+            for f in fills
+        ],
         "open_positions": positions,
         "patterns": studies,
         "risk_limits": {

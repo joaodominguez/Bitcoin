@@ -329,9 +329,10 @@ def api_movements():
         if origin not in (None, "carteira", "sleeve_btc"):
             origin = None
         if side:
-            side = side.upper()
-            if side not in ("BUY", "SELL", "HOLD"):
-                side = None
+            parts = [p.strip().upper() for p in side.split(",") if p.strip()]
+            allowed = {"BUY", "SELL", "HOLD"}
+            parts = [p for p in parts if p in allowed]
+            side = ",".join(parts) if parts else None
         payload = movements_mod.movements_payload(
             watchlist_mod.state_dir(),
             limit=limit,

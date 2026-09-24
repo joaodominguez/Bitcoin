@@ -110,7 +110,11 @@ def test_rebalance_tracks_realized_pnl():
         "cost_eur": {"AAPL": 90.0},
         "realized_pnl_eur": 0.0,
     }
-    eq = W._rebalance(book, {}, {"AAPL": 110.0})
+    eq, fills = W._rebalance(book, {}, {"AAPL": 110.0})
     assert book["units"] == {}
     assert book["realized_pnl_eur"] > 0
     assert eq == 1100.0  # marked at sell price before cash settles
+    assert len(fills) == 1
+    assert fills[0]["side"] == "SELL"
+    assert fills[0]["pnl_eur"] > 0
+    assert fills[0]["price_eur"] == 110.0

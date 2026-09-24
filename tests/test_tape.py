@@ -123,8 +123,9 @@ def test_rebalance_can_sell_bitcoin_above_cost():
         "last_prices": {"bitcoin": 100.0, "SPY": 100.0},
         "cost_eur": {"bitcoin": 100.0, "SPY": 100.0},
     }
-    W._rebalance(book, {"SPY": 1.0}, {"bitcoin": 110.0, "SPY": 100.0})
+    _, fills = W._rebalance(book, {"SPY": 1.0}, {"bitcoin": 110.0, "SPY": 100.0})
     assert "bitcoin" not in book["units"]
+    assert any(f["side"] == "SELL" and f["asset"] == "bitcoin" and f["pnl_eur"] > 0 for f in fills)
 
 
 def test_fund_reserves_cash_without_selling_bitcoin(tmp_path):
