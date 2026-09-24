@@ -27,6 +27,8 @@ def test_favicon_and_asset_areas(client):
     html = page.get_data(as_text=True)
     assert page.status_code == 200
     assert "favicon.png" in html
+    assert "capital-rail" in html
+    assert "stage" in html
     assert "Ouro" in html and "Metais" in html
     assert "Petróleo" in html and "Energia" in html
     assert "Tecnologia" in html
@@ -40,7 +42,7 @@ def test_portfolio_page_refreshes_itself(client):
     html = client.get("/").get_data(as_text=True)
     assert "WATCH_REFRESH_MS = 30000" in html
     assert "setInterval" in html
-    assert "A carteira atualiza sozinha" in html
+    assert "atualiza a cada 30 s" in html
 
 
 def test_password_protects_pages(monkeypatch):
