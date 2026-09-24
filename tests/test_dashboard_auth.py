@@ -27,8 +27,12 @@ def test_favicon_and_asset_areas(client):
     html = page.get_data(as_text=True)
     assert page.status_code == 200
     assert "favicon.png" in html
-    assert 'class="desk"' in html
-    assert 'class="kpis"' in html
+    assert 'id="w_top_cards"' in html
+    assert 'id="w_perf_chart"' in html
+    assert "Desempenho da carteira" in html
+    assert "Watchlist" in html
+    assert "Últimas transações" in html
+    assert "cdn.tailwindcss.com" in html
     assert "Ouro" in html and "Metais" in html
     assert "Petróleo" in html and "Energia" in html
     assert "Tecnologia" in html

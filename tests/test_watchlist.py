@@ -100,7 +100,9 @@ def test_decide_sells_cautious_assets(tmp_path):
     }, index=idx)
     decision = W.decide(path, capital=10_000, prices=prices)
     assert "ethereum" not in decision["weights"]
-    assert abs(sum(decision["weights"].values()) - 1) < 1e-6
+    invested = sum(decision["weights"].values())
+    assert invested <= 1.0 + 1e-6
+    assert invested <= 1.0 - W.MIN_CASH_WEIGHT + 1e-6
     assert decision["cautious"] == ["ethereum"]
     assert any(a["action"] == "BUY" for a in decision["actions"])
 

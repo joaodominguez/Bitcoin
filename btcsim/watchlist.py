@@ -485,6 +485,33 @@ def _equity(book: dict, prices: dict[str, float]) -> float:
     return total
 
 
+CRYPTO_NAMES = {
+    "bitcoin", "ethereum", "solana", "cardano", "dogecoin", "ripple", "binancecoin",
+}
+MAX_SINGLE_WEIGHT = 0.40
+MAX_CRYPTO_WEIGHT = 0.18  # strategic sleeve stays light while BTC looks jumpy
+MIN_CASH_WEIGHT = 0.08
+
+
+def apply_risk_limits(weights: dict[str, float]) -> dict[str, float]:
+    """Clip single-name and crypto exposure; leave room for cash."""
+    if not weights:
+        return {}
+    capped = {k: min(float(v), MAX_SINGLE_WEIGHT) for k, v in weights.items() if float(v) > 0}
+    crypto_total = sum(v for k, v in capped.items() if k.lower() in CRYPTO_NAMES)
+    if crypto_total > MAX_CRYPTO_WEIGHT and crypto_total > 0:
+        scale = MAX_CRYPTO_WEIGHT / crypto_total
+        for name in list(capped):
+            if name.lower() in CRYPTO_NAMES:
+                capped[name] *= scale
+    total = sum(capped.values())
+    max_invested = 1.0 - MIN_CASH_WEIGHT
+    if total > max_invested and total > 0:
+        scale = max_invested / total
+        capped = {k: v * scale for k, v in capped.items()}
+    return {k: round(v, 6) for k, v in capped.items() if v > 1e-6}
+
+
 def _breakeven(cost: float, fee_rate: float) -> float:
     return float(cost) * (1 + fee_rate) / (1 - fee_rate)
 
@@ -591,10 +618,19 @@ def decide(
                 f"volatilidade {result.exp_volatility_pct:.1f}%."
             )
 
+    weights = apply_risk_limits(weights)
+    if weights and note.startswith("Alocacao"):
+        note += (
+            f" Limites: max {MAX_SINGLE_WEIGHT:.0%} por ativo, "
+            f"max {MAX_CRYPTO_WEIGHT:.0%} cripto, min {MIN_CASH_WEIGHT:.0%} cash."
+        )
+
     decision_path = path.parent / "last_decision.json"
     previous = {}
+    previous_decision = {}
     if decision_path.exists():
-        previous = json.loads(decision_path.read_text(encoding="utf-8")).get("weights", {})
+        previous_decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        previous = previous_decision.get("weights", {})
 
     spot = _price_map(frame)
     if exp_return_pct is None and studies:
@@ -631,6 +667,11 @@ def decide(
         "cautious": cautious,
         "actions": _actions(previous, weights, capital_atual),
         "patterns": studies,
+        "risk_limits": {
+            "max_single": MAX_SINGLE_WEIGHT,
+            "max_crypto": MAX_CRYPTO_WEIGHT,
+            "min_cash": MIN_CASH_WEIGHT,
+        },
     }
     decision["advice"] = portfolio_advice(
         studies, decision["actions"], cautious
@@ -639,9 +680,15 @@ def decide(
     with (path.parent / "decision_log.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(decision, ensure_ascii=False) + "\n")
     try:
+        from .history import record_equity
+
+        record_equity(path.parent, capital_atual, source="decide")
+    except Exception as exc:  # noqa: BLE001
+        print(f"histórico falhou: {exc}")
+    try:
         from .notify import send_decision
 
-        send_decision(decision)
+        send_decision(decision, state_dir=path.parent)
     except Exception as exc:  # noqa: BLE001
         print(f"push falhou: {exc}")
     return decision

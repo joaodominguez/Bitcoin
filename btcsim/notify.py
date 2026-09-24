@@ -1,17 +1,19 @@
 """Push notifications for virtual portfolio decisions.
 
-Uses ntfy (https://ntfy.sh). The phone subscribes to a private topic and
-receives a push each time the automation records a decision. Nothing is sent
-when NTFY_TOPIC is empty.
+Uses ntfy (https://ntfy.sh). Sends only when something material changed —
+a buy/sell, a tape fill, or a capital move above the threshold.
 """
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 import requests
 
 ACTION_PT = {"BUY": "Comprar", "SELL": "Vender", "HOLD": "Manter"}
+CAPITAL_MOVE_PCT = 1.0
 
 
 def _eur(value) -> str:
@@ -31,6 +33,8 @@ def _message(decision: dict) -> str:
     for action in decision.get("actions") or []:
         weight = float(action.get("weight_after_pct") or 0)
         if weight < 0.5 and action.get("action") != "SELL":
+            continue
+        if action.get("action") == "HOLD":
             continue
         label = ACTION_PT.get(action.get("action"), action.get("action"))
         amount = float(action.get("amount") or 0)
@@ -59,9 +63,51 @@ def _post(title: str, message: str, tags: list[str]) -> bool:
     return True
 
 
-def send_decision(decision: dict) -> bool:
-    """Send one push. Returns True when ntfy accepts it."""
-    return _post("Carteira virtual — nova decisão", _message(decision), ["chart"])
+def material_decision(decision: dict, previous: dict | None = None) -> bool:
+    """True when the hourly cycle warrants a push."""
+    for action in decision.get("actions") or []:
+        if action.get("action") in {"BUY", "SELL"} and (
+            action.get("action") == "SELL" or float(action.get("weight_after_pct") or 0) >= 0.5
+        ):
+            # Ignore HOLD-shaped noise: require a real weight change.
+            before = float(action.get("weight_before_pct") or 0)
+            after = float(action.get("weight_after_pct") or 0)
+            if abs(after - before) >= 2.0:
+                return True
+    if decision.get("cautious") and previous is not None:
+        if set(decision.get("cautious") or []) != set(previous.get("cautious") or []):
+            return True
+    if previous:
+        prev_cap = float(previous.get("capital_atual") or 0)
+        now_cap = float(decision.get("capital_atual") or 0)
+        if prev_cap > 0 and abs(now_cap - prev_cap) / prev_cap * 100 >= CAPITAL_MOVE_PCT:
+            return True
+    return False
+
+
+def send_decision(decision: dict, state_dir: Path | None = None) -> bool:
+    """Send one push when the decision is material. Returns True when sent."""
+    previous = None
+    snap_path = None
+    if state_dir is not None:
+        snap_path = Path(state_dir) / "last_push.json"
+        if snap_path.exists():
+            previous = json.loads(snap_path.read_text(encoding="utf-8"))
+    if not material_decision(decision, previous):
+        return False
+    ok = _post("Carteira virtual — mudança", _message(decision), ["chart"])
+    if ok and snap_path is not None:
+        snap_path.write_text(
+            json.dumps(
+                {
+                    "capital_atual": decision.get("capital_atual"),
+                    "cautious": decision.get("cautious") or [],
+                    "at": decision.get("at"),
+                }
+            ),
+            encoding="utf-8",
+        )
+    return ok
 
 
 def send_tape(event: dict) -> bool:

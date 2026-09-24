@@ -1,9 +1,9 @@
-"""Intraday Bitcoin sleeve: buy the dip, sell only in profit.
+"""Intraday Bitcoin sleeve: buy meaningful dips, sell only in profit.
 
-Virtual money only. Buys slices when the spot price touches a ladder at or
-below 80,000 USD. Sells a slice only when the round trip is net positive after
-fees. Underwater slices are held. This sleeve is separate from the hourly
-portfolio so that rebalance cannot sell these units at a loss.
+Virtual money only. Levels are computed from the recent 30-day high, not a
+fixed 80k print. When the market looks jumpy we wait for deeper dips and keep
+smaller slices. Underwater lots are held. Separate from the hourly book so
+rebalance cannot sell these units at a loss.
 """
 
 from __future__ import annotations
@@ -19,16 +19,31 @@ import requests
 from .watchlist import _equity, _load_book, _save_book, book_lock, state_dir
 
 FEE_RATE = 0.001
-MIN_NET = 0.008
-BUDGET_EUR = 1500.0
-SLICE_EUR = 250.0
-LEVELS_USD = (80_000.0, 78_000.0, 76_000.0, 74_000.0)
+MIN_NET = 0.01  # slightly wider — noise in a volatile move is not a scalp
+BUDGET_EUR = 1200.0  # keep dry powder; something may move BTC hard
+SLICE_EUR = 200.0
+# Pullbacks from the 30-day high. Alert stance: first buy only after ~8%.
+DIP_FRACS = (0.08, 0.11, 0.14, 0.18)
 SPOT_URL = "https://api.coingecko.com/api/v3/simple/price"
+CHART_URL = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
 
 
 def sell_trigger_usd(entry_usd: float, fee_rate: float = FEE_RATE, min_net: float = MIN_NET) -> float:
     """USD price that clears fees and leaves ``min_net`` profit."""
     return float(entry_usd) * (1 + fee_rate) / (1 - fee_rate) * (1 + min_net)
+
+
+def levels_from_high(high_usd: float, fracs: tuple[float, ...] = DIP_FRACS) -> list[float]:
+    """Buy rungs as round USD levels below a recent high."""
+    high = float(high_usd)
+    if high <= 0:
+        return []
+    levels = []
+    for frac in fracs:
+        level = round(high * (1 - frac) / 100) * 100  # nearest 100 USD
+        if level > 0 and (not levels or level < levels[-1] - 50):
+            levels.append(float(level))
+    return levels
 
 
 def _now_iso(now: datetime | None = None) -> str:
@@ -42,7 +57,8 @@ def fresh_state() -> dict:
     return {
         "budget_eur": BUDGET_EUR,
         "slice_eur": SLICE_EUR,
-        "levels_usd": list(LEVELS_USD),
+        "levels_usd": [],
+        "anchor_high_usd": None,
         "fee_rate": FEE_RATE,
         "min_net": MIN_NET,
         "cash_eur": 0.0,
@@ -52,6 +68,12 @@ def fresh_state() -> dict:
         "realized_pnl_eur": 0.0,
         "trades": [],
         "last_spot": None,
+        "stance": "alert",
+        "note": (
+            "Compro só em recuos face ao máximo de 30 dias (−8/−11/−14/−18%), "
+            "fatias de 200 EUR até 1 200 EUR. Vendo só em lucro. Se continuar a "
+            "cair, mantenho."
+        ),
     }
 
 
@@ -64,6 +86,13 @@ def load_tape(directory: Path) -> dict:
     base.update(data)
     base["lots"] = list(data.get("lots") or [])
     base["trades"] = list(data.get("trades") or [])
+    # Migrate old fixed-80k tape to the adaptive rule without forcing buys.
+    if data.get("levels_usd") == [80000.0, 78000.0, 76000.0, 74000.0] and not data.get("lots"):
+        base["levels_usd"] = []
+        base["budget_eur"] = BUDGET_EUR
+        base["slice_eur"] = SLICE_EUR
+        base["min_net"] = MIN_NET
+        base["note"] = fresh_state()["note"]
     return base
 
 
@@ -102,6 +131,39 @@ def fetch_spot() -> dict:
     response.raise_for_status()
     row = response.json()["bitcoin"]
     return {"usd": float(row["usd"]), "eur": float(row["eur"])}
+
+
+def fetch_30d_high() -> float | None:
+    try:
+        response = requests.get(
+            CHART_URL,
+            params={"vs_currency": "usd", "days": "30"},
+            timeout=25,
+            headers={"User-Agent": "btcsim/0.1"},
+        )
+        response.raise_for_status()
+        prices = response.json().get("prices") or []
+        if not prices:
+            return None
+        return float(max(point[1] for point in prices))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def refresh_levels(tape: dict, high_usd: float | None, spot_usd: float) -> list[float]:
+    """Update buy rungs from the recent high. Never raise open lots."""
+    anchor = float(high_usd or tape.get("anchor_high_usd") or spot_usd)
+    # Keep the higher watermark so a bounce does not cancel deeper rungs mid-dip.
+    prev = float(tape.get("anchor_high_usd") or 0)
+    if prev > anchor:
+        anchor = prev
+    if spot_usd > anchor:
+        anchor = spot_usd
+    tape["anchor_high_usd"] = round(anchor, 2)
+    levels = levels_from_high(anchor)
+    tape["levels_usd"] = levels
+    tape["stance"] = "alert"
+    return levels
 
 
 def fund_from_book(book: dict, tape: dict, fee_rate: float = FEE_RATE) -> float:
@@ -155,6 +217,8 @@ def step(tape: dict, spot: dict, now: datetime | None = None) -> list[dict]:
         return []
     stamp = _now_iso(now)
     tape["last_spot"] = {"usd": usd, "eur": eur, "at": stamp}
+    if not tape.get("levels_usd"):
+        refresh_levels(tape, tape.get("anchor_high_usd"), usd)
     fee = float(tape.get("fee_rate", FEE_RATE))
     min_net = float(tape.get("min_net", MIN_NET))
     fills: list[dict] = []
@@ -185,7 +249,7 @@ def step(tape: dict, spot: dict, now: datetime | None = None) -> list[dict]:
 
     open_levels = {float(lot["level_usd"]) for lot in tape["lots"]}
     open_spent = sum(float(lot["spent_eur"]) for lot in tape["lots"])
-    for level in sorted((float(x) for x in tape.get("levels_usd") or LEVELS_USD), reverse=True):
+    for level in sorted((float(x) for x in tape.get("levels_usd") or []), reverse=True):
         if usd > level or level in open_levels:
             continue
         room = float(tape["budget_eur"]) - open_spent
@@ -229,25 +293,36 @@ def view(tape: dict, now: datetime | None = None) -> dict:
     day = _now_iso(now)[:10]
     today = [t for t in tape.get("trades") or [] if str(t.get("at", "")).startswith(day)]
     spot = tape.get("last_spot") or {}
+    levels = [float(x) for x in tape.get("levels_usd") or []]
+    first = levels[0] if levels else None
+    spot_usd = spot.get("usd")
+    waiting = first is None or (spot_usd is not None and spot_usd > first)
     return {
-        "rule": (
-            "Compro fatias de 250 EUR quando o Bitcoin chega a 80 000, 78 000, "
-            "76 000 ou 74 000 USD, até 1 500 EUR no total. Vendo cada fatia só "
-            "quando a venda fica em lucro depois das taxas. Se o preço continuar "
-            "a cair, mantenho o lote."
-        ),
+        "rule": tape.get("note") or fresh_state()["note"],
+        "stance": tape.get("stance", "alert"),
+        "anchor_high_usd": tape.get("anchor_high_usd"),
+        "levels_usd": levels,
         "budget_eur": tape.get("budget_eur", BUDGET_EUR),
         "cash_eur": round(float(tape.get("cash_eur") or 0.0), 2),
         "funded": bool(tape.get("funded")),
-        "spot_usd": spot.get("usd"),
+        "spot_usd": spot_usd,
         "spot_eur": spot.get("eur"),
         "spot_at": spot.get("at"),
+        "waiting": waiting,
+        "next_buy_usd": first,
         "open_lots": [
             {
                 "level_usd": lot["level_usd"],
                 "price_usd": lot["price_usd"],
                 "spent_eur": lot["spent_eur"],
-                "sell_from_usd": round(sell_trigger_usd(lot["price_usd"], float(tape.get("fee_rate", FEE_RATE)), float(tape.get("min_net", MIN_NET))), 2),
+                "sell_from_usd": round(
+                    sell_trigger_usd(
+                        lot["price_usd"],
+                        float(tape.get("fee_rate", FEE_RATE)),
+                        float(tape.get("min_net", MIN_NET)),
+                    ),
+                    2,
+                ),
             }
             for lot in tape.get("lots") or []
         ],
@@ -302,12 +377,19 @@ def _notify(fills: list[dict], capitals: dict) -> None:
             print(f"push falhou: {exc}")
 
 
-def cycle(directory: Path | None = None, spot: dict | None = None, now: datetime | None = None) -> dict:
+def cycle(
+    directory: Path | None = None,
+    spot: dict | None = None,
+    now: datetime | None = None,
+    high_usd: float | None = None,
+) -> dict:
     directory = directory or state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     quote = spot if spot is not None else fetch_spot()
+    high = high_usd if high_usd is not None else fetch_30d_high()
     with book_lock(directory):
         tape = load_tape(directory)
+        refresh_levels(tape, high, float(quote["usd"]))
         book = _load_book(directory / "watchlist.json", 10_000.0)
         moved = fund_from_book(book, tape)
         if moved:
@@ -315,6 +397,12 @@ def cycle(directory: Path | None = None, spot: dict | None = None, now: datetime
         fills = step(tape, quote, now=now)
         save_tape(directory, tape)
         capitals = _capitals(directory, tape)
+        try:
+            from .history import record_equity
+
+            record_equity(directory, capitals["capital_atual"], source="tape")
+        except Exception as exc:  # noqa: BLE001
+            print(f"histórico falhou: {exc}")
     _notify(fills, capitals)
     return {"moved_eur": round(moved, 2), "fills": fills, "tape": view(tape, now=now), **capitals}
 
@@ -322,7 +410,7 @@ def cycle(directory: Path | None = None, spot: dict | None = None, now: datetime
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="btcsim.tape",
-        description="Compra Bitcoin nos 80 mil e vende só em lucro. Dinheiro virtual.",
+        description="Compra Bitcoin em recuos face ao máximo recente e vende só em lucro.",
     )
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--every-minutes", type=float, default=15.0)
@@ -332,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(cycle(), indent=2, ensure_ascii=False))
 
     if args.loop:
-        print(f"Bitcoin intradiário a cada {args.every_minutes} min (dinheiro virtual).")
+        print(f"Bitcoin adaptativo a cada {args.every_minutes} min (dinheiro virtual).")
         while True:
             try:
                 once()
