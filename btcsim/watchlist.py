@@ -667,6 +667,7 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
     units = {k: float(v) for k, v in book.get("units", {}).items()}
     cash = float(book.get("cash", 0.0))
     costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
+    realized = float(book.get("realized_pnl_eur") or 0.0)
     for asset, qty in units.items():
         if asset not in costs and merged.get(asset) and qty > 0:
             costs[asset] = float(merged[asset])
@@ -684,7 +685,11 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
                 if cost and px < _breakeven(cost, fee_rate):
                     continue
             sell_val = current - target
-            cash += sell_val * (1 - fee_rate)
+            sold_units = sell_val / px
+            avg_cost = float(costs.get(asset, px))
+            proceeds = sell_val * (1 - fee_rate)
+            realized += proceeds - sold_units * avg_cost
+            cash += proceeds
             units[asset] = target / px if target > 0 else 0.0
             if units[asset] <= 1e-10:
                 costs.pop(asset, None)
@@ -707,7 +712,81 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
     book["cash"] = cash
     book["last_prices"] = merged
     book["cost_eur"] = {k: v for k, v in costs.items() if k in book["units"]}
+    book["realized_pnl_eur"] = round(realized, 2)
     return equity
+
+
+def open_positions(
+    book: dict,
+    *,
+    total_capital: float,
+    tape: dict | None = None,
+    actions: list[dict] | None = None,
+) -> list[dict]:
+    """Real open lots for the desk cards (book units + BTC sleeve lots)."""
+    by_action = {}
+    for action in actions or []:
+        by_action[str(action.get("asset") or "").lower()] = action
+
+    prices = book.get("last_prices") or {}
+    costs = book.get("cost_eur") or {}
+    units = book.get("units") or {}
+    rows: list[dict] = []
+    for asset, qty in units.items():
+        qty = float(qty)
+        if qty <= 1e-10:
+            continue
+        px = float(prices.get(asset) or 0.0)
+        if px <= 0:
+            continue
+        value = qty * px
+        avg = float(costs.get(asset) or px)
+        cost_basis = qty * avg
+        pnl = value - cost_basis
+        act = by_action.get(str(asset).lower()) or {}
+        rows.append({
+            "asset": asset,
+            "origin": "carteira",
+            "units": round(qty, 8),
+            "price_eur": round(px, 4),
+            "amount": round(value, 2),
+            "cost_eur": round(cost_basis, 2),
+            "pnl_eur": round(pnl, 2),
+            "pnl_pct": round((pnl / cost_basis) * 100, 2) if cost_basis else 0.0,
+            "weight_pct": round((value / total_capital) * 100, 2) if total_capital else 0.0,
+            "action": act.get("action") or "HOLD",
+            "open": True,
+        })
+
+    if tape:
+        spot_eur = None
+        if tape.get("last_spot"):
+            spot_eur = tape["last_spot"].get("eur")
+        for lot in tape.get("lots") or []:
+            units_lot = float(lot.get("units") or 0)
+            if units_lot <= 0:
+                continue
+            px = float(spot_eur or lot.get("price_eur") or 0)
+            spent = float(lot.get("spent_eur") or 0)
+            value = units_lot * px
+            pnl = value - spent
+            rows.append({
+                "asset": "bitcoin",
+                "origin": "sleeve_btc",
+                "units": round(units_lot, 8),
+                "price_eur": round(px, 4),
+                "amount": round(value, 2),
+                "cost_eur": round(spent, 2),
+                "pnl_eur": round(pnl, 2),
+                "pnl_pct": round((pnl / spent) * 100, 2) if spent else 0.0,
+                "weight_pct": round((value / total_capital) * 100, 2) if total_capital else 0.0,
+                "action": "HOLD",
+                "open": True,
+                "level_usd": lot.get("level_usd"),
+            })
+
+    rows.sort(key=lambda r: float(r.get("amount") or 0), reverse=True)
+    return rows
 
 
 def decide(
@@ -801,7 +880,7 @@ def decide(
             exp_return_pct = round(
                 sum(item["return_30d_pct"] for item in held) / len(held) * 12, 2
             )
-    from .tape import mark_to_market
+    from .tape import load_tape, mark_to_market
 
     with book_lock(path.parent):
         book = _load_book(path, capital)
@@ -811,13 +890,29 @@ def decide(
         )
         previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
         _rebalance(book, weights, spot)
+        capital_atual = round(
+            _equity(book, book.get("last_prices") or {}) + mark_to_market(path.parent),
+            2,
+        )
+        previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
         _save_book(path, book)
+        tape_state = load_tape(path.parent)
 
+    actions = _actions(previous, weights, capital_atual)
+    positions = open_positions(
+        book,
+        total_capital=capital_atual,
+        tape=tape_state,
+        actions=actions,
+    )
     decision = {
         "at": _now(),
         "virtual_capital": capital,
         "capital_inicial": round(float(book["initial"]), 2),
         "capital_atual": capital_atual,
+        "cash_eur": round(float(book.get("cash") or 0.0), 2),
+        "realized_pnl_eur": round(float(book.get("realized_pnl_eur") or 0.0), 2),
+        "unrealized_pnl_eur": round(sum(float(p.get("pnl_eur") or 0) for p in positions), 2),
         "previsao": previsao,
         "previsao_retorno_pct": exp_return_pct,
         "previsao_horizonte": "12 meses",
@@ -827,7 +922,8 @@ def decide(
         "disclaimer": "Decisao virtual. Nao e uma ordem nem aconselhamento financeiro.",
         "weights": {k: round(v, 4) for k, v in weights.items()},
         "cautious": cautious,
-        "actions": _actions(previous, weights, capital_atual),
+        "actions": actions,
+        "open_positions": positions,
         "patterns": studies,
         "risk_limits": {
             "max_single": MAX_SINGLE_WEIGHT,

@@ -76,3 +76,41 @@ def test_decide_uses_daily_rotation(tmp_path: Path):
     assert decision["weights"]
     assert "AAPL" in decision["weights"]
     assert any(a["action"] == "BUY" for a in decision["actions"])
+    assert "open_positions" in decision
+    assert any(p["asset"] == "AAPL" for p in decision["open_positions"])
+
+
+def test_open_positions_lists_book_units_not_zero_sells():
+    book = {
+        "units": {"MSFT": 2.0, "bitcoin": 0.01},
+        "last_prices": {"MSFT": 400.0, "bitcoin": 70_000.0},
+        "cost_eur": {"MSFT": 390.0, "bitcoin": 75_000.0},
+        "cash": 1000.0,
+    }
+    actions = [
+        {"asset": "MSFT", "action": "HOLD", "weight_after_pct": 20},
+        {"asset": "NVDA", "action": "SELL", "weight_after_pct": 0, "amount": 0},
+    ]
+    rows = W.open_positions(book, total_capital=10_000.0, actions=actions)
+    assets = {r["asset"] for r in rows}
+    assert "MSFT" in assets
+    assert "bitcoin" in assets
+    assert "NVDA" not in assets
+    msft = next(r for r in rows if r["asset"] == "MSFT")
+    assert msft["pnl_eur"] == 20.0
+    assert msft["amount"] == 800.0
+
+
+def test_rebalance_tracks_realized_pnl():
+    book = {
+        "initial": 10_000.0,
+        "cash": 0.0,
+        "units": {"AAPL": 10.0},
+        "last_prices": {"AAPL": 100.0},
+        "cost_eur": {"AAPL": 90.0},
+        "realized_pnl_eur": 0.0,
+    }
+    eq = W._rebalance(book, {}, {"AAPL": 110.0})
+    assert book["units"] == {}
+    assert book["realized_pnl_eur"] > 0
+    assert eq == 1100.0  # marked at sell price before cash settles
