@@ -496,63 +496,58 @@ def daily_rotation_weights(studies: list[dict], eligible: set[str] | list[str]) 
     tech, ETFs, commodities and a light crypto sleeve. Takes profit / cuts losers
     by simply leaving weak names at weight 0.
     """
-    allowed = {str(x).replace("stock:", "") for x in eligible}
-    # Map study asset names (often without stock: prefix) to canonical book keys.
+    allowed_bare = {str(x).replace("stock:", "").lower() for x in eligible}
     ranked = []
     for item in studies:
         asset = str(item["asset"])
-        bare = asset.replace("stock:", "")
-        if bare not in allowed and asset not in allowed:
-            # eligible may be specs like stock:AAPL while study uses AAPL
-            if bare.lower() not in {a.replace("stock:", "").lower() for a in allowed}:
-                continue
-        if item.get("stance") == "não perseguir" and float(item.get("return_1d_pct") or 0) < 0.15:
+        bare = asset.replace("stock:", "").lower()
+        if bare not in allowed_bare:
             continue
-        if float(item.get("edge_score") or -99) < -2.0 and not str(item.get("trend", "")).startswith("alta"):
+        if item.get("stance") == "não perseguir" and float(item.get("return_1d_pct") or 0) < 0.05:
             continue
         ranked.append(item)
     ranked.sort(key=lambda x: float(x.get("edge_score") or 0), reverse=True)
 
-    picked: list[dict] = []
-    class_used: dict[str, float] = {}
-    for item in ranked:
-        cls = item.get("class") or _asset_class(item["asset"])
-        budget = CLASS_BUDGET.get(cls, 0.10)
-        used = class_used.get(cls, 0.0)
-        if used >= budget - 1e-6:
-            continue
-        if len(picked) >= MAX_NAMES_IN_BOOK:
-            break
-        # Skip clearly weak day unless gold/commodity hedge with positive edge.
-        if float(item.get("edge_score") or 0) < 0 and cls not in {"commodity", "etf"}:
-            continue
-        if float(item.get("edge_score") or 0) < 1.0 and cls == "crypto":
-            continue  # crypto only when short-term edge is clear
-        room = budget - used
-        # Slot size: stronger edge → larger slice within class budget.
-        edge = max(0.5, float(item.get("edge_score") or 0.5))
-        slot = min(room, MAX_SINGLE_WEIGHT, 0.08 + edge * 0.012)
-        if slot < 0.04:
-            continue
-        picked.append({**item, "class": cls, "slot": slot})
-        class_used[cls] = used + slot
-
-    if not picked:
-        # Defensive fallback: best ETF or cash later via risk limits.
-        etfs = [s for s in ranked if (s.get("class") or _asset_class(s["asset"])) == "etf"]
-        if etfs:
-            picked = [{**etfs[0], "slot": 0.25}]
-        else:
+    def _fill(candidates: list[dict], *, min_edge: float) -> dict[str, float]:
+        picked: list[dict] = []
+        class_used: dict[str, float] = {}
+        for item in candidates:
+            if float(item.get("edge_score") or 0) < min_edge:
+                continue
+            cls = item.get("class") or _asset_class(item["asset"])
+            budget = CLASS_BUDGET.get(cls, 0.10)
+            used = class_used.get(cls, 0.0)
+            if used >= budget - 1e-6:
+                continue
+            if len(picked) >= MAX_NAMES_IN_BOOK:
+                break
+            if cls == "crypto" and float(item.get("edge_score") or 0) < 1.5:
+                continue
+            room = budget - used
+            edge = max(0.5, float(item.get("edge_score") or 0.5))
+            slot = min(room, MAX_SINGLE_WEIGHT, 0.08 + edge * 0.012)
+            if slot < 0.04:
+                continue
+            picked.append({**item, "class": cls, "slot": slot})
+            class_used[cls] = used + slot
+        if not picked:
             return {}
+        raw = {str(p["asset"]): float(p["slot"]) for p in picked}
+        total = sum(raw.values())
+        max_invested = 1.0 - MIN_CASH_WEIGHT
+        if total > max_invested and total > 0:
+            scale = max_invested / total
+            raw = {k: v * scale for k, v in raw.items()}
+        return {k: round(v, 6) for k, v in raw.items() if v > 1e-6}
 
-    raw = {str(p["asset"]): float(p["slot"]) for p in picked}
-    # Prefer canonical names as they appear in price frame columns.
-    total = sum(raw.values())
-    max_invested = 1.0 - MIN_CASH_WEIGHT
-    if total > max_invested and total > 0:
-        scale = max_invested / total
-        raw = {k: v * scale for k, v in raw.items()}
-    return {k: round(v, 6) for k, v in raw.items() if v > 1e-6}
+    # Prefer clear short-term edge; if the tape is quiet, still rotate the least-bad names.
+    weights = _fill(ranked, min_edge=0.0)
+    if not weights:
+        weights = _fill(ranked, min_edge=-8.0)
+    if not weights and ranked:
+        top = ranked[0]
+        weights = {str(top["asset"]): 0.25}
+    return weights
 
 
 def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[str]) -> str:
