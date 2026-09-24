@@ -291,8 +291,10 @@ def api_watch():
     equity = history_mod.series_payload(watchlist_mod.state_dir())
     movements = movements_mod.movements_payload(watchlist_mod.state_dir(), limit=30)
     from . import layout as layout_mod
+    from . import news_memory as news_memory_mod
 
     layout = layout_mod.load_layout(watchlist_mod.state_dir())
+    news_context = news_memory_mod.context_payload(watchlist_mod.state_dir())
     return jsonify({
         "watchlist": data,
         "decision": decision,
@@ -302,6 +304,7 @@ def api_watch():
         "changed": equity.get("changed"),
         "movements": movements,
         "layout": layout,
+        "news_context": news_context,
     })
 
 
