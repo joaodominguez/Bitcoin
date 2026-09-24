@@ -40,6 +40,8 @@ def test_favicon_and_asset_areas(client):
     assert "Tecnologia" in html
     assert "fetchJson" in html
     assert 'id="app_status"' in html
+    assert "decision.day_pnl_eur ?? decision.unrealized_pnl_eur ?? 0" in html
+    assert "decision.unrealized_pnl_eur || 0" not in html
     icon = client.get("/static/favicon.png")
     assert icon.status_code == 200
     assert icon.mimetype == "image/png"

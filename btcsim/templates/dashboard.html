@@ -1251,7 +1251,7 @@ function renderWatch(list, decision, changes, tape, sources, equity, movements, 
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Inicial</div><div class="mono text-lg mt-1">${fmtCompact(inicial)} <span class="text-slate-500 text-sm">${cur}</span></div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Atual</div><div class="mono text-lg mt-1 ${cls(delta)}">${fmtCompact(atual)}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ</div><div class="mono text-lg mt-1 ${cls(delta)}">${sign(delta)} <span class="text-sm">(${sign(deltaPct)}%)</span></div></div>
-    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ hoje</div><div class="mono text-lg mt-1 ${cls(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}">${fmtCompact(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}</div></div>
+    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ hoje</div><div class="mono text-lg mt-1 ${cls(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur ?? 0))}">${fmtCompact(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur ?? 0))}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">BTC spot</div><div class="mono text-lg mt-1">${spot}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Sleeve</div><div class="mono text-lg mt-1">${fmtCompact((tape && tape.cash_eur) || 0)} <span class="text-slate-500 text-sm">EUR</span></div></div>`;
 
