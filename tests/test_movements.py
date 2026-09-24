@@ -131,6 +131,9 @@ def test_backfill_from_decision_log_and_tape(tmp_path: Path):
                         "weight_before_pct": 50,
                         "weight_after_pct": 0,
                         "amount": 0,
+                        "traded_eur": 500.0,
+                        "price_eur": 450.0,
+                        "pnl_eur": -12.5,
                     }
                 ],
             )

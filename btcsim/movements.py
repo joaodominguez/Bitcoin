@@ -223,6 +223,26 @@ def ensure_backfill(directory: Path) -> int:
     return backfill(directory)
 
 
+def _row_matches(
+    row: dict,
+    *,
+    origin: str | None = None,
+    side: str | None = None,
+) -> bool:
+    if origin and row.get("origin") != origin:
+        return False
+    if side:
+        wanted = {s.strip().upper() for s in str(side).split(",") if s.strip()}
+        if str(row.get("side") or "").upper() not in wanted:
+            return False
+    side_u = str(row.get("side") or "").upper()
+    if side_u in {"BUY", "SELL"}:
+        if row.get("price_eur") is None and row.get("price_usd") is None:
+            if abs(float(row.get("amount_eur") or 0.0)) < 0.01:
+                return False
+    return True
+
+
 def load_movements(
     directory: Path,
     *,
@@ -243,12 +263,8 @@ def load_movements(
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if origin and row.get("origin") != origin:
+        if not _row_matches(row, origin=origin, side=side):
             continue
-        if side:
-            wanted = {s.strip().upper() for s in str(side).split(",") if s.strip()}
-            if str(row.get("side") or "").upper() not in wanted:
-                continue
         rows.append(row)
     rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
     limit = max(1, min(int(limit), 1000))
@@ -275,13 +291,8 @@ def movements_payload(
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if origin and row.get("origin") != origin:
-                continue
-            if side:
-                wanted = {s.strip().upper() for s in str(side).split(",") if s.strip()}
-                if str(row.get("side") or "").upper() not in wanted:
-                    continue
-            total += 1
+            if _row_matches(row, origin=origin, side=side):
+                total += 1
     items = load_movements(
         directory, limit=limit, offset=offset, origin=origin, side=side
     )
