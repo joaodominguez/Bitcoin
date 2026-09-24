@@ -8,5 +8,6 @@ venv
 tests
 docs
 *.png
+!btcsim/static/favicon.png
 *.md
 .env

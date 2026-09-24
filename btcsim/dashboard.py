@@ -31,17 +31,7 @@ from .simulator import Simulator
 from .strategies import STRATEGY_REGISTRY, build_strategy
 from . import tape as tape_mod
 from . import watchlist as watchlist_mod
-
-COINS = ["bitcoin", "ethereum", "solana", "cardano", "dogecoin", "binancecoin"]
-STOCKS = [
-    ("stock:AAPL", "Apple (AAPL)"),
-    ("stock:MSFT", "Microsoft (MSFT)"),
-    ("stock:GOOGL", "Alphabet (GOOGL)"),
-    ("stock:AMZN", "Amazon (AMZN)"),
-    ("stock:NVDA", "Nvidia (NVDA)"),
-    ("stock:TSLA", "Tesla (TSLA)"),
-    ("stock:SPY", "S&P 500 ETF (SPY)"),
-]
+from .assets import groups, ui_catalog
 
 app = Flask(__name__)
 
@@ -162,8 +152,8 @@ def index():
         "dashboard.html",
         strategies=sorted(STRATEGY_REGISTRY),
         default_strategies=DEFAULT_STRATEGIES,
-        coins=COINS,
-        stocks=STOCKS,
+        asset_groups=groups(),
+        asset_catalog=ui_catalog(),
         methods=list(alloc_mod.ALLOCATION_METHODS),
         disclaimer=DISCLAIMER,
     )

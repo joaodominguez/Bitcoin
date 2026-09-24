@@ -3,6 +3,23 @@ import pandas as pd
 from btcsim import watchlist as W
 
 
+def test_collect_titles_keeps_every_source():
+    titles = W.collect_titles(
+        [["crypto %s" % i for i in range(20)], ["Gold rallies", "Crude oil falls"]],
+        per_feed=12,
+        limit=48,
+    )
+    assert len(titles) == 14
+    assert "Gold rallies" in titles
+    assert "Crude oil falls" in titles
+
+
+def test_gold_and_oil_are_recognized():
+    assert "stock:GLD" in W.mentions("Gold price hits a record high")
+    assert "stock:USO" in W.mentions("Crude oil plunges as demand drops")
+    assert W.mentions("The methodology was solid") == []
+
+
 def test_mentions_known_assets():
     specs = W.mentions("Bitcoin ETF approval lifts ether while Apple rallies")
     assert "bitcoin" in specs

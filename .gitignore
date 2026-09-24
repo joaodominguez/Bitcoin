@@ -12,6 +12,7 @@ state/
 output/
 *.png
 !docs/*.png
+!btcsim/static/favicon.png
 
 # Secrets
 .env

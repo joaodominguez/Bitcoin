@@ -22,6 +22,20 @@ def test_open_when_no_password(client):
     assert resp.status_code == 200
 
 
+def test_favicon_and_asset_areas(client):
+    page = client.get("/")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert "favicon.png" in html
+    assert "Ouro" in html and "Metais" in html
+    assert "Petróleo" in html and "Energia" in html
+    assert "Tecnologia" in html
+    icon = client.get("/static/favicon.png")
+    assert icon.status_code == 200
+    assert icon.mimetype == "image/png"
+    assert icon.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_portfolio_page_refreshes_itself(client):
     html = client.get("/").get_data(as_text=True)
     assert "WATCH_REFRESH_MS = 30000" in html

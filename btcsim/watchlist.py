@@ -28,30 +28,19 @@ import pandas as pd
 import requests
 
 from . import allocation as alloc_mod
+from .assets import CATALOG
 from .news import score_text
 
 DEFAULT_FEEDS = (
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "https://cointelegraph.com/rss",
+    "https://feeds.marketwatch.com/marketwatch/topstories/",
+    "https://oilprice.com/rss/main",
 )
 
 # (asset spec, phrases that count as a mention)
-UNIVERSE: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("bitcoin", ("bitcoin", "btc")),
-    ("ethereum", ("ethereum", "ether", "eth")),
-    ("solana", ("solana", "sol")),
-    ("cardano", ("cardano", "ada")),
-    ("dogecoin", ("dogecoin", "doge")),
-    ("ripple", ("ripple", "xrp")),
-    ("binancecoin", ("binance coin", "bnb")),
-    ("stock:AAPL", ("aapl", "apple")),
-    ("stock:MSFT", ("msft", "microsoft")),
-    ("stock:GOOGL", ("googl", "google", "alphabet")),
-    ("stock:AMZN", ("amzn", "amazon")),
-    ("stock:NVDA", ("nvda", "nvidia")),
-    ("stock:TSLA", ("tsla", "tesla")),
-    ("stock:META", ("meta platforms", "facebook")),
-    ("stock:SPY", ("s&p 500", "s&p500", "sp500")),
+UNIVERSE: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (item["spec"], item["needles"]) for item in CATALOG
 )
 
 SEED_SPECS = ("bitcoin", "ethereum", "stock:SPY", "stock:AAPL", "stock:MSFT")
@@ -170,10 +159,22 @@ def apply_headlines(data: dict, headlines: list[str]) -> dict:
     return {"added": added, "cautioned": cautioned, "skipped": skipped}
 
 
-def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 40) -> list[str]:
-    """Pull recent titles from public RSS feeds. Failures are skipped."""
+def collect_titles(per_source: list[list[str]], per_feed: int = 12, limit: int = 48) -> list[str]:
+    """Keep a slice from each source so one feed cannot crowd out the others."""
     titles: list[str] = []
+    for source in per_source:
+        for title in source[:per_feed]:
+            if len(titles) >= limit:
+                return titles
+            titles.append(title)
+    return titles
+
+
+def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 48, per_feed: int = 12) -> list[str]:
+    """Pull recent titles from public RSS feeds. Failures are skipped."""
+    per_source: list[list[str]] = []
     for url in feeds:
+        titles: list[str] = []
         try:
             resp = requests.get(url, timeout=20, headers={"User-Agent": "btcsim/0.1"})
             resp.raise_for_status()
@@ -184,9 +185,11 @@ def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 40) -> 
             title = (item.findtext("title") or "").strip()
             if title:
                 titles.append(title)
-            if len(titles) >= limit:
-                return titles
-    return titles
+            if len(titles) >= per_feed:
+                break
+        if titles:
+            per_source.append(titles)
+    return collect_titles(per_source, per_feed=per_feed, limit=limit)
 
 
 def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dict:
