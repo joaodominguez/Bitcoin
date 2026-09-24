@@ -294,7 +294,19 @@ def api_watch():
         "tape": tape,
         "news_sources": watchlist_mod.news_sources(),
         "equity": equity,
+        "changed": equity.get("changed"),
     })
+
+
+@app.route("/api/tape/backtest")
+def api_tape_backtest():
+    try:
+        days = int(request.args.get("days", 180))
+        days = max(60, min(days, 365))
+        report = tape_mod.backtest_sleeve(days=days)
+        return jsonify(report)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/watch/run")
