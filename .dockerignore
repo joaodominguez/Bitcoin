@@ -1,0 +1,13 @@
+.git
+.cache
+output
+__pycache__
+.pytest_cache
+.venv
+venv
+tests
+docs
+*.png
+!btcsim/static/favicon.png
+*.md
+.env

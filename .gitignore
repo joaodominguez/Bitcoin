@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Simulator artifacts and runtime decisions
+.cache/
+state/
+output/
+*.png
+!docs/*.png
+!btcsim/static/favicon.png
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+
+# Screenshots
+*.webp

@@ -1,0 +1,742 @@
+"""Standing watchlist and virtual decisions driven by news.
+
+The operator authorized this process to keep reading public headlines, add
+crypto or stocks to a watchlist, and record a virtual allocation decision.
+Nothing here places a real order. Decisions are educational and use virtual
+capital only.
+
+State lives under ``state/`` (override with ``BTCSIM_STATE``):
+
+* ``watchlist.json`` — assets being watched, with the headline that added them
+* ``last_decision.json`` — latest target weights and buy/sell/hold actions
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import time
+import xml.etree.ElementTree as ET
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+import requests
+
+from . import allocation as alloc_mod
+from urllib.parse import quote
+
+from .assets import CATALOG, YAHOO_MACRO, YAHOO_SYMBOL
+from .news import score_text
+
+# RSS mirrors of the public pages. Yahoo's HTML topic/quote pages are the same
+# news as these feeds, which a program can actually read.
+RSS_FEEDS = (
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("Cointelegraph", "https://cointelegraph.com/rss"),
+    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
+    ("OilPrice", "https://oilprice.com/rss/main"),
+)
+YAHOO_LATEST = "https://finance.yahoo.com/news/rssindex"
+YAHOO_HEADLINE = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbols}&region=US&lang=en-US"
+DEFAULT_FEEDS = tuple(url for _, url in RSS_FEEDS)
+
+# A headline about rates, inflation or the dollar moves assets even when it
+# never says their name.
+MACRO_LINKS = (
+    (("federal reserve", "rate hike", "rate cut", "treasury yield", "bond yield"), ("bitcoin", "ethereum", "stock:SPY", "stock:GLD")),
+    (("inflation", "consumer price"), ("bitcoin", "stock:SPY", "stock:GLD")),
+    (("dollar index", "us dollar"), ("bitcoin", "stock:GLD")),
+)
+
+# (asset spec, phrases that count as a mention)
+UNIVERSE: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (item["spec"], item["needles"]) for item in CATALOG
+)
+
+SEED_SPECS = ("bitcoin", "ethereum", "stock:SPY", "stock:AAPL", "stock:MSFT")
+MAX_ASSETS = 12
+ADD_THRESHOLD = 0.2
+CAUTION_THRESHOLD = -0.2
+
+
+def state_dir() -> Path:
+    path = Path(os.environ.get("BTCSIM_STATE", "state"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@contextmanager
+def book_lock(directory: Path):
+    """Exclusive lock so the hourly book and the intraday sleeve do not clobber each other."""
+    directory.mkdir(parents=True, exist_ok=True)
+    handle = (directory / "book.lock").open("a+")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _empty() -> dict:
+    return {
+        "authorization": (
+            "Autonomia permanente, dada pelo operador, apenas para dinheiro virtual: "
+            "ler noticias publicas, acrescentar cripto ou acoes a esta lista e "
+            "registar uma decisao de alocacao. Nao envia ordens reais."
+        ),
+        "assets": [
+            {
+                "spec": spec,
+                "added_at": _now(),
+                "reason": "lista inicial",
+                "headline": "",
+                "score": 0.0,
+                "caution": False,
+            }
+            for spec in SEED_SPECS
+        ],
+    }
+
+
+def load(path: Path | None = None) -> dict:
+    path = path or (state_dir() / "watchlist.json")
+    if not path.exists():
+        data = _empty()
+        save(data, path)
+        return data
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save(data: dict, path: Path | None = None) -> None:
+    path = path or (state_dir() / "watchlist.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def mentions(text: str) -> list[str]:
+    """Return asset specs named in ``text``."""
+    lowered = text.lower()
+    found = []
+    for spec, needles in UNIVERSE:
+        for needle in needles:
+            if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", lowered):
+                found.append(spec)
+                break
+    return found
+
+
+def macro_specs(text: str) -> list[str]:
+    """Assets a macro headline can move even without naming them."""
+    lowered = text.lower()
+    found = []
+    for needles, specs in MACRO_LINKS:
+        if any(needle in lowered for needle in needles):
+            for spec in specs:
+                if spec not in found:
+                    found.append(spec)
+    return found
+
+
+def influenced_specs(text: str) -> list[str]:
+    found = mentions(text)
+    for spec in macro_specs(text):
+        if spec not in found:
+            found.append(spec)
+    return found
+
+
+def apply_headlines(data: dict, headlines: list[str]) -> dict:
+    """Update the watchlist from headlines. Returns a summary of changes."""
+    added, cautioned, skipped = [], [], []
+    known = {a["spec"]: a for a in data["assets"]}
+
+    for headline in headlines:
+        score = score_text(headline)
+        for spec in influenced_specs(headline):
+            entry = known.get(spec)
+            if score >= ADD_THRESHOLD and entry is None:
+                if len(data["assets"]) >= MAX_ASSETS:
+                    skipped.append(spec)
+                    continue
+                entry = {
+                    "spec": spec,
+                    "added_at": _now(),
+                    "reason": "noticia bullish",
+                    "headline": headline,
+                    "score": round(score, 3),
+                    "caution": False,
+                }
+                data["assets"].append(entry)
+                known[spec] = entry
+                added.append(spec)
+            elif score <= CAUTION_THRESHOLD and entry is not None:
+                entry["caution"] = True
+                entry["headline"] = headline
+                entry["score"] = round(score, 3)
+                entry["reason"] = "noticia bearish (reduzir na proxima decisao)"
+                cautioned.append(spec)
+            elif score >= ADD_THRESHOLD and entry is not None and entry.get("caution"):
+                entry["caution"] = False
+                entry["headline"] = headline
+                entry["score"] = round(score, 3)
+                entry["reason"] = "noticia bullish (cautela levantada)"
+
+    return {"added": added, "cautioned": cautioned, "skipped": skipped}
+
+
+def collect_titles(per_source: list[list[str]], per_feed: int = 12, limit: int = 48) -> list[str]:
+    """Keep a slice from each source so one feed cannot crowd out the others."""
+    titles: list[str] = []
+    for source in per_source:
+        for title in source[:per_feed]:
+            if len(titles) >= limit:
+                return titles
+            titles.append(title)
+    return titles
+
+
+def rss_titles(payload: bytes, limit: int) -> list[str]:
+    root = ET.fromstring(payload)
+    titles = []
+    for item in root.iter("item"):
+        title = (item.findtext("title") or "").strip()
+        if not title:
+            continue
+        titles.append(title)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
+def yahoo_feed_urls(batch: int = 4) -> list[tuple[str, str]]:
+    """RSS for the same news as finance.yahoo.com/topic/latest-news and /quote/TICKER/news."""
+    symbols = [YAHOO_SYMBOL[item["spec"]] for item in CATALOG] + list(YAHOO_MACRO)
+    feeds = [("Yahoo Finance · últimas", YAHOO_LATEST)]
+    for start in range(0, len(symbols), batch):
+        chunk = symbols[start:start + batch]
+        encoded = ",".join(quote(symbol, safe="") for symbol in chunk)
+        label = "Yahoo Finance · " + ", ".join(chunk)
+        feeds.append((label, YAHOO_HEADLINE.format(symbols=encoded)))
+    return feeds
+
+
+def news_sources() -> list[dict]:
+    """Human pages, shown on the dashboard. The fetcher reads their RSS."""
+    return [
+        {"name": "Yahoo Finance · últimas", "url": "https://finance.yahoo.com/topic/latest-news/"},
+        {"name": "Yahoo Finance · Bitcoin", "url": "https://finance.yahoo.com/quote/BTC-USD/news/"},
+        {"name": "Yahoo Finance · Nvidia", "url": "https://finance.yahoo.com/quote/NVDA/news/"},
+        {"name": "Yahoo Finance · ouro", "url": "https://finance.yahoo.com/quote/GC=F/news/"},
+        {"name": "Yahoo Finance · petróleo", "url": "https://finance.yahoo.com/quote/CL=F/news/"},
+        {"name": "CoinDesk", "url": "https://www.coindesk.com/"},
+        {"name": "Cointelegraph", "url": "https://cointelegraph.com/"},
+        {"name": "MarketWatch", "url": "https://www.marketwatch.com/"},
+        {"name": "OilPrice", "url": "https://oilprice.com/"},
+    ]
+
+
+def _pull_rss(source: str, url: str, per_feed: int) -> list[dict]:
+    try:
+        resp = requests.get(
+            url,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0 btcsim/0.1"},
+        )
+        resp.raise_for_status()
+        return [{"title": title, "source": source} for title in rss_titles(resp.content, per_feed)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def fetch_news_items(per_feed: int = 8, limit: int = 96) -> list[dict]:
+    """Titles from crypto, stock, commodity and macro sources. One source cannot fill the list."""
+    groups = []
+    for source, url in RSS_FEEDS:
+        items = _pull_rss(source, url, per_feed)
+        if items:
+            groups.append(items)
+    for source, url in yahoo_feed_urls():
+        items = _pull_rss(source, url, per_feed)
+        if items:
+            groups.append(items)
+    flat = collect_titles([[item["title"] for item in group] for group in groups], per_feed=per_feed, limit=limit)
+    # Rebuild source tags for the titles that survived the cap, in the same order.
+    lookup = {}
+    for group in groups:
+        for item in group:
+            lookup.setdefault(item["title"], item["source"])
+    return [{"title": title, "source": lookup.get(title, "")} for title in flat]
+
+
+def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 96, per_feed: int = 8) -> list[str]:
+    """Pull recent titles. ``feeds`` is kept for tests; the live path reads every source."""
+    if feeds is not DEFAULT_FEEDS:
+        per_source = []
+        for url in feeds:
+            items = _pull_rss("feed", url, per_feed)
+            if items:
+                per_source.append([item["title"] for item in items])
+        return collect_titles(per_source, per_feed=per_feed, limit=limit)
+    return [item["title"] for item in fetch_news_items(per_feed=per_feed, limit=limit)]
+
+
+def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dict:
+    """Read news (or use ``headlines``) and persist watchlist changes."""
+    path = path or (state_dir() / "watchlist.json")
+    data = load(path)
+    items = None
+    if headlines is None:
+        items = fetch_news_items()
+        used = [item["title"] for item in items]
+    else:
+        used = headlines
+    summary = apply_headlines(data, used)
+    data["updated_at"] = _now()
+    data["headlines_read"] = len(used)
+    if items is not None:
+        data["recent_headlines"] = items
+    save(data, path)
+    summary["watchlist"] = data
+    return summary
+
+
+def _actions(previous: dict[str, float], target: dict[str, float], capital: float) -> list[dict]:
+    names = sorted(set(previous) | set(target))
+    actions = []
+    for name in names:
+        before = float(previous.get(name, 0.0))
+        after = float(target.get(name, 0.0))
+        delta = after - before
+        if after == 0 and before == 0:
+            continue
+        if abs(delta) < 0.02 and after > 0 and before > 0:
+            side = "HOLD"
+        elif delta > 0:
+            side = "BUY"
+        elif delta < 0:
+            side = "SELL"
+        else:
+            side = "HOLD"
+        actions.append({
+            "asset": name,
+            "action": side,
+            "weight_before_pct": round(before * 100, 2),
+            "weight_after_pct": round(after * 100, 2),
+            "amount": round(after * capital, 2),
+        })
+    return actions
+
+
+def study_patterns(prices) -> list[dict]:
+    """Read trend, RSI and recent drawdown for each column.
+
+    Returns a plain-language stance per asset. These are pattern readings for
+    the virtual book, not a guarantee of what the price will do next.
+    """
+    from . import indicators
+
+    studies = []
+    for name in prices.columns:
+        series = prices[name].dropna()
+        if len(series) < 30:
+            continue
+        last = float(series.iloc[-1])
+        sma_fast = indicators.sma(series, 20).iloc[-1]
+        sma_slow = indicators.sma(series, 50).iloc[-1] if len(series) >= 50 else float("nan")
+        rsi_now = float(indicators.rsi(series, 14).iloc[-1])
+        ret_30 = float(series.iloc[-1] / series.iloc[-30] - 1.0)
+        window = series.iloc[-60:] if len(series) >= 60 else series
+        drawdown = last / float(window.max()) - 1.0
+
+        above_fast = last > sma_fast
+        if sma_slow == sma_slow and above_fast and sma_fast > sma_slow:
+            trend = "alta confirmada"
+        elif sma_slow == sma_slow and not above_fast and sma_fast < sma_slow:
+            trend = "baixa confirmada"
+        elif above_fast:
+            trend = "alta curta"
+        else:
+            trend = "baixa curta"
+
+        if rsi_now >= 70:
+            stance = "não perseguir"
+            reading = (
+                "O RSI está acima de 70, zona de sobrecompra. "
+                "O padrão recente já esticou. Eu não comprava agora."
+            )
+        elif rsi_now <= 30 and trend.startswith("baixa"):
+            stance = "não entrar com tudo"
+            reading = (
+                "O preço está fraco e o RSI está em sobrevenda. "
+                "Isso não é, por si, um sinal para comprar o lote inteiro. "
+                "No máximo uma fração pequena, e aos poucos."
+            )
+        elif trend.startswith("alta") and 35 <= rsi_now < 70:
+            stance = "manter ou reforçar aos poucos"
+            reading = (
+                "A tendência curta é de subida e o RSI não está num extremo. "
+                "Eu mantinha a posição e, se o peso estivesse baixo, reforçava com compras pequenas."
+            )
+        elif trend.startswith("baixa"):
+            stance = "reduzir"
+            reading = (
+                "O preço está abaixo da média curta. "
+                "Eu reduzia ou ficava de fora até o preço voltar a fechar acima dessa média."
+            )
+        else:
+            stance = "esperar"
+            reading = "Os sinais não apontam na mesma direção. Eu não mudava a posição por este padrão."
+
+        studies.append({
+            "asset": name,
+            "trend": trend,
+            "rsi": round(rsi_now, 1),
+            "return_30d_pct": round(ret_30 * 100, 1),
+            "drawdown_pct": round(drawdown * 100, 1),
+            "stance": stance,
+            "reading": reading,
+        })
+    return studies
+
+
+def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[str]) -> str:
+    """One paragraph: what the automation would do with the virtual capital."""
+    if not studies and not actions:
+        if cautious:
+            return (
+                "Eu ficava em cash virtual. As notícias recentes são negativas "
+                "para o que está na lista, por isso não abriria posição."
+            )
+        return "Ainda não há padrões suficientes para uma leitura."
+
+    sentences = []
+    by_asset = {item["asset"]: item for item in studies}
+    for action in actions:
+        if action["weight_after_pct"] < 1 and action["action"] != "SELL":
+            continue
+        pattern = by_asset.get(action["asset"])
+        stance = pattern["stance"] if pattern else "seguir o peso da carteira"
+        verb = {
+            "BUY": "aumentava o peso",
+            "SELL": "reduzia",
+            "HOLD": "mantinha",
+        }[action["action"]]
+        sentences.append(
+            f"Em {action['asset']} {verb} para {action['weight_after_pct']:.0f}% ({stance})."
+        )
+    if cautious:
+        sentences.append(
+            "Ficava de fora de "
+            + ", ".join(cautious)
+            + " por causa de notícias negativas recentes."
+        )
+    if not sentences:
+        return "Eu não mexia na carteira virtual neste ciclo."
+    return " ".join(sentences)
+
+
+def _load_book(path: Path, initial: float) -> dict:
+    book_path = path.parent / "book.json"
+    if book_path.exists():
+        book = json.loads(book_path.read_text(encoding="utf-8"))
+        book.setdefault("initial", initial)
+        book.setdefault("cash", initial)
+        book.setdefault("units", {})
+        book.setdefault("last_prices", {})
+        return book
+    return {"initial": initial, "cash": initial, "units": {}, "last_prices": {}}
+
+
+def _save_book(path: Path, book: dict) -> None:
+    (path.parent / "book.json").write_text(
+        json.dumps(book, indent=2), encoding="utf-8"
+    )
+
+
+def _price_map(frame) -> dict[str, float]:
+    if frame is None or frame.empty:
+        return {}
+    last = frame.iloc[-1]
+    prices = {}
+    for name in frame.columns:
+        value = last[name]
+        if pd.notna(value) and float(value) > 0:
+            prices[name] = float(value)
+    return prices
+
+
+def _equity(book: dict, prices: dict[str, float]) -> float:
+    total = float(book.get("cash", 0.0))
+    known = {**book.get("last_prices", {}), **prices}
+    for asset, units in book.get("units", {}).items():
+        px = known.get(asset)
+        if px:
+            total += float(units) * float(px)
+    return total
+
+
+CRYPTO_NAMES = {
+    "bitcoin", "ethereum", "solana", "cardano", "dogecoin", "ripple", "binancecoin",
+}
+MAX_SINGLE_WEIGHT = 0.40
+MAX_CRYPTO_WEIGHT = 0.18  # strategic sleeve stays light while BTC looks jumpy
+MIN_CASH_WEIGHT = 0.08
+
+
+def apply_risk_limits(weights: dict[str, float]) -> dict[str, float]:
+    """Clip single-name and crypto exposure; leave room for cash."""
+    if not weights:
+        return {}
+    capped = {k: min(float(v), MAX_SINGLE_WEIGHT) for k, v in weights.items() if float(v) > 0}
+    crypto_total = sum(v for k, v in capped.items() if k.lower() in CRYPTO_NAMES)
+    if crypto_total > MAX_CRYPTO_WEIGHT and crypto_total > 0:
+        scale = MAX_CRYPTO_WEIGHT / crypto_total
+        for name in list(capped):
+            if name.lower() in CRYPTO_NAMES:
+                capped[name] *= scale
+    total = sum(capped.values())
+    max_invested = 1.0 - MIN_CASH_WEIGHT
+    if total > max_invested and total > 0:
+        scale = max_invested / total
+        capped = {k: v * scale for k, v in capped.items()}
+    return {k: round(v, 6) for k, v in capped.items() if v > 1e-6}
+
+
+def _breakeven(cost: float, fee_rate: float) -> float:
+    return float(cost) * (1 + fee_rate) / (1 - fee_rate)
+
+
+def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], fee_rate: float = 0.001) -> float:
+    """Move the virtual book to ``weights`` of its current value. Returns that value.
+
+    Bitcoin is not sold below its cost after fees. A falling price is held.
+    """
+    merged = {**book.get("last_prices", {}), **prices}
+    equity = _equity(book, merged)
+    units = {k: float(v) for k, v in book.get("units", {}).items()}
+    cash = float(book.get("cash", 0.0))
+    costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
+    for asset, qty in units.items():
+        if asset not in costs and merged.get(asset) and qty > 0:
+            costs[asset] = float(merged[asset])
+    targets = {name: equity * float(weight) for name, weight in weights.items()}
+
+    for asset, qty in list(units.items()):
+        px = merged.get(asset)
+        if not px:
+            continue
+        target = targets.get(asset, 0.0)
+        current = qty * px
+        if current > target + 0.01:
+            if asset == "bitcoin":
+                cost = costs.get(asset)
+                if cost and px < _breakeven(cost, fee_rate):
+                    continue
+            sell_val = current - target
+            cash += sell_val * (1 - fee_rate)
+            units[asset] = target / px if target > 0 else 0.0
+            if units[asset] <= 1e-10:
+                costs.pop(asset, None)
+
+    for asset, target in targets.items():
+        px = merged.get(asset)
+        if not px:
+            continue
+        current = units.get(asset, 0.0) * px
+        if target > current + 0.01 and cash > 0:
+            buy_val = min(target - current, cash / (1 + fee_rate))
+            old_units = units.get(asset, 0.0)
+            new_units = old_units + buy_val / px
+            old_cost = costs.get(asset, px)
+            costs[asset] = (old_units * old_cost + buy_val) / new_units
+            cash -= buy_val * (1 + fee_rate)
+            units[asset] = new_units
+
+    book["units"] = {k: v for k, v in units.items() if v > 1e-10}
+    book["cash"] = cash
+    book["last_prices"] = merged
+    book["cost_eur"] = {k: v for k, v in costs.items() if k in book["units"]}
+    return equity
+
+
+def decide(
+    path: Path | None = None,
+    capital: float = 10_000.0,
+    currency: str = "eur",
+    method: str = "min_variance",
+    prices=None,
+) -> dict:
+    """Allocate virtual capital across the watchlist and store the decision.
+
+    Assets flagged ``caution`` by a bearish headline are left at weight 0
+    (a virtual sell) until a later bullish headline clears the flag.
+    """
+    path = path or (state_dir() / "watchlist.json")
+    data = load(path)
+    eligible = [a["spec"] for a in data["assets"] if not a.get("caution")]
+    cautious = [a["spec"] for a in data["assets"] if a.get("caution")]
+
+    from .allocation import _spec_name
+
+    all_specs = [a["spec"] for a in data["assets"]]
+    frame = None
+    if prices is not None:
+        frame = prices
+    elif all_specs:
+        frame = alloc_mod.load_prices(all_specs, currency=currency, days=365)
+
+    studies = study_patterns(frame) if frame is not None and not frame.empty else []
+    weights: dict[str, float] = {}
+    exp_return_pct = None
+    note = "Alocacao defensiva (minima variancia) sobre a watchlist, depois de ler os padroes."
+    if not eligible:
+        note = "Todas as posicoes estao em cautela. Decisao: ficar em cash virtual."
+    elif frame is not None:
+        wanted = [_spec_name(spec) for spec in eligible]
+        book = frame[[c for c in wanted if c in frame.columns]]
+        names = list(book.columns)
+        if len(names) == 1:
+            weights = {names[0]: 1.0}
+        elif len(names) >= 2:
+            returns = alloc_mod.daily_returns(book)
+            result = alloc_mod.optimize(names, returns, method=method, n_samples=8_000)
+            weights = {k: float(v) for k, v in result.weights.items()}
+            exp_return_pct = result.exp_return_pct
+            note = (
+                f"Alocacao {method} depois da leitura de padroes: "
+                f"retorno esperado {result.exp_return_pct:+.1f}%, "
+                f"volatilidade {result.exp_volatility_pct:.1f}%."
+            )
+
+    weights = apply_risk_limits(weights)
+    if weights and note.startswith("Alocacao"):
+        note += (
+            f" Limites: max {MAX_SINGLE_WEIGHT:.0%} por ativo, "
+            f"max {MAX_CRYPTO_WEIGHT:.0%} cripto, min {MIN_CASH_WEIGHT:.0%} cash."
+        )
+
+    decision_path = path.parent / "last_decision.json"
+    previous = {}
+    previous_decision = {}
+    if decision_path.exists():
+        previous_decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        previous = previous_decision.get("weights", {})
+
+    spot = _price_map(frame)
+    if exp_return_pct is None and studies:
+        held = [item for item in studies if item["asset"] in weights]
+        if held:
+            exp_return_pct = round(
+                sum(item["return_30d_pct"] for item in held) / len(held) * 12, 2
+            )
+    from .tape import mark_to_market
+
+    with book_lock(path.parent):
+        book = _load_book(path, capital)
+        capital_atual = round(
+            _equity(book, {**book.get("last_prices", {}), **spot}) + mark_to_market(path.parent),
+            2,
+        )
+        previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
+        _rebalance(book, weights, spot)
+        _save_book(path, book)
+
+    decision = {
+        "at": _now(),
+        "virtual_capital": capital,
+        "capital_inicial": round(float(book["initial"]), 2),
+        "capital_atual": capital_atual,
+        "previsao": previsao,
+        "previsao_retorno_pct": exp_return_pct,
+        "previsao_horizonte": "12 meses",
+        "currency": currency.upper(),
+        "method": method,
+        "note": note,
+        "disclaimer": "Decisao virtual. Nao e uma ordem nem aconselhamento financeiro.",
+        "weights": {k: round(v, 4) for k, v in weights.items()},
+        "cautious": cautious,
+        "actions": _actions(previous, weights, capital_atual),
+        "patterns": studies,
+        "risk_limits": {
+            "max_single": MAX_SINGLE_WEIGHT,
+            "max_crypto": MAX_CRYPTO_WEIGHT,
+            "min_cash": MIN_CASH_WEIGHT,
+        },
+    }
+    decision["advice"] = portfolio_advice(
+        studies, decision["actions"], cautious
+    )
+    decision_path.write_text(json.dumps(decision, indent=2, ensure_ascii=False), encoding="utf-8")
+    with (path.parent / "decision_log.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(decision, ensure_ascii=False) + "\n")
+    try:
+        from .history import record_equity
+
+        record_equity(path.parent, capital_atual, source="decide")
+    except Exception as exc:  # noqa: BLE001
+        print(f"histórico falhou: {exc}")
+    try:
+        from .notify import send_decision
+
+        send_decision(decision, state_dir=path.parent)
+    except Exception as exc:  # noqa: BLE001
+        print(f"push falhou: {exc}")
+    return decision
+
+
+def run_once(path: Path | None = None, headlines: list[str] | None = None) -> dict:
+    summary = refresh(path, headlines=headlines)
+    decision = decide(path)
+    return {"changes": {k: summary[k] for k in ("added", "cautioned", "skipped")}, "decision": decision}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="btcsim.watchlist",
+        description="Le noticias, atualiza a watchlist e regista uma decisao virtual.",
+    )
+    parser.add_argument("--refresh", action="store_true", help="So ler noticias e atualizar a lista.")
+    parser.add_argument("--decide", action="store_true", help="So calcular a decisao virtual atual.")
+    parser.add_argument("--loop", action="store_true", help="Repetir para sempre (uso no servidor).")
+    parser.add_argument("--every-hours", type=float, default=1.0)
+    parser.add_argument("--capital", type=float, default=10_000.0)
+    args = parser.parse_args(argv)
+
+    def cycle() -> None:
+        if args.decide and not args.refresh and not args.loop:
+            print(json.dumps(decide(capital=args.capital), indent=2, ensure_ascii=False))
+            return
+        if args.refresh and not args.loop:
+            summary = refresh()
+            print(json.dumps({k: summary[k] for k in ("added", "cautioned", "skipped", "headlines_read") if k in summary or True}, indent=2, ensure_ascii=False))
+            if not args.decide:
+                return
+        result = run_once()
+        print(json.dumps(result["changes"], indent=2, ensure_ascii=False))
+        print(json.dumps(result["decision"], indent=2, ensure_ascii=False))
+
+    if args.loop:
+        print(f"Watchlist autonoma a cada {args.every_hours}h (dinheiro virtual). Ctrl+C para parar.")
+        while True:
+            try:
+                cycle()
+            except Exception as exc:  # noqa: BLE001
+                print(f"ciclo falhou: {exc}")
+            time.sleep(max(0.1, args.every_hours) * 3600)
+    else:
+        cycle()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
