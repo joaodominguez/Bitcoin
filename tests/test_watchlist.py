@@ -101,6 +101,9 @@ def test_decision_includes_advice(tmp_path):
     decision = W.decide(path, prices=prices)
     assert "bitcoin" in decision["advice"]
     assert decision["patterns"][0]["asset"] == "bitcoin"
+    assert decision["capital_inicial"] == 10000
+    assert decision["capital_atual"] == 10000
+    assert decision["previsao"] > 0
 
 
 def test_second_decision_can_hold(tmp_path):

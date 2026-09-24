@@ -477,10 +477,19 @@ function renderWatch(list, decision, changes) {
     return;
   }
   const when = (decision.at || '').replace('T', ' ').slice(0, 16);
-  $('w_advice').innerHTML = `<p style="font-size:18px;line-height:1.45;">${decision.advice || ''}</p>
+  const cur = decision.currency || 'EUR';
+  const inicial = decision.capital_inicial ?? decision.virtual_capital;
+  const atual = decision.capital_atual ?? inicial;
+  const previsao = decision.previsao ?? atual;
+  const horizonte = decision.previsao_horizonte || '12 meses';
+  $('w_advice').innerHTML = `<div class="kpis">
+      <div class="kpi"><div class="l">Capital inicial</div><div class="v">${fmtMoney(inicial, cur)}</div></div>
+      <div class="kpi"><div class="l">Capital atual</div><div class="v ${cls(atual - inicial)}">${fmtMoney(atual, cur)}</div></div>
+      <div class="kpi"><div class="l">A minha previsão (${horizonte})</div><div class="v ${cls(previsao - atual)}">${fmtMoney(previsao, cur)}</div></div>
+    </div>
+    <p style="font-size:18px;line-height:1.45;">${decision.advice || ''}</p>
     <p class="muted">Atualizado em ${when} UTC. ${decision.disclaimer || ''}</p>`;
 
-  const cur = decision.currency || 'EUR';
   const acts = (decision.actions || []).filter(a => a.weight_after_pct >= 0.5 || a.action === 'SELL').map(a => `<tr>
     <td>${a.asset}</td>
     <td class="${a.action==='SELL'?'neg':a.action==='BUY'?'pos':''}">${ACTION_PT[a.action] || a.action}</td>

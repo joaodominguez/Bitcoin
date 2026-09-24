@@ -14,8 +14,20 @@ import requests
 ACTION_PT = {"BUY": "Comprar", "SELL": "Vender", "HOLD": "Manter"}
 
 
+def _eur(value) -> str:
+    return f"{float(value):,.0f} EUR".replace(",", " ")
+
+
 def _message(decision: dict) -> str:
     lines = []
+    if decision.get("capital_inicial") is not None:
+        lines.append(f"Capital inicial: {_eur(decision['capital_inicial'])}")
+        lines.append(f"Capital atual: {_eur(decision.get('capital_atual', 0))}")
+        lines.append(
+            f"A minha previsão ({decision.get('previsao_horizonte', '12 meses')}): "
+            f"{_eur(decision.get('previsao', 0))}"
+        )
+        lines.append("")
     for action in decision.get("actions") or []:
         weight = float(action.get("weight_after_pct") or 0)
         if weight < 0.5 and action.get("action") != "SELL":

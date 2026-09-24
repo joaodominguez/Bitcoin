@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 import requests
 
 from . import allocation as alloc_mod
@@ -321,6 +322,81 @@ def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[st
     return " ".join(sentences)
 
 
+def _load_book(path: Path, initial: float) -> dict:
+    book_path = path.parent / "book.json"
+    if book_path.exists():
+        book = json.loads(book_path.read_text(encoding="utf-8"))
+        book.setdefault("initial", initial)
+        book.setdefault("cash", initial)
+        book.setdefault("units", {})
+        book.setdefault("last_prices", {})
+        return book
+    return {"initial": initial, "cash": initial, "units": {}, "last_prices": {}}
+
+
+def _save_book(path: Path, book: dict) -> None:
+    (path.parent / "book.json").write_text(
+        json.dumps(book, indent=2), encoding="utf-8"
+    )
+
+
+def _price_map(frame) -> dict[str, float]:
+    if frame is None or frame.empty:
+        return {}
+    last = frame.iloc[-1]
+    prices = {}
+    for name in frame.columns:
+        value = last[name]
+        if pd.notna(value) and float(value) > 0:
+            prices[name] = float(value)
+    return prices
+
+
+def _equity(book: dict, prices: dict[str, float]) -> float:
+    total = float(book.get("cash", 0.0))
+    known = {**book.get("last_prices", {}), **prices}
+    for asset, units in book.get("units", {}).items():
+        px = known.get(asset)
+        if px:
+            total += float(units) * float(px)
+    return total
+
+
+def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], fee_rate: float = 0.001) -> float:
+    """Move the virtual book to ``weights`` of its current value. Returns that value."""
+    merged = {**book.get("last_prices", {}), **prices}
+    equity = _equity(book, merged)
+    units = {k: float(v) for k, v in book.get("units", {}).items()}
+    cash = float(book.get("cash", 0.0))
+    targets = {name: equity * float(weight) for name, weight in weights.items()}
+
+    for asset, qty in list(units.items()):
+        px = merged.get(asset)
+        if not px:
+            continue
+        target = targets.get(asset, 0.0)
+        current = qty * px
+        if current > target + 0.01:
+            sell_val = current - target
+            cash += sell_val * (1 - fee_rate)
+            units[asset] = target / px if target > 0 else 0.0
+
+    for asset, target in targets.items():
+        px = merged.get(asset)
+        if not px:
+            continue
+        current = units.get(asset, 0.0) * px
+        if target > current + 0.01 and cash > 0:
+            buy_val = min(target - current, cash / (1 + fee_rate))
+            cash -= buy_val * (1 + fee_rate)
+            units[asset] = units.get(asset, 0.0) + buy_val / px
+
+    book["units"] = {k: v for k, v in units.items() if v > 1e-10}
+    book["cash"] = cash
+    book["last_prices"] = merged
+    return equity
+
+
 def decide(
     path: Path | None = None,
     capital: float = 10_000.0,
@@ -349,6 +425,7 @@ def decide(
 
     studies = study_patterns(frame) if frame is not None and not frame.empty else []
     weights: dict[str, float] = {}
+    exp_return_pct = None
     note = "Alocacao defensiva (minima variancia) sobre a watchlist, depois de ler os padroes."
     if not eligible:
         note = "Todas as posicoes estao em cautela. Decisao: ficar em cash virtual."
@@ -362,6 +439,7 @@ def decide(
             returns = alloc_mod.daily_returns(book)
             result = alloc_mod.optimize(names, returns, method=method, n_samples=8_000)
             weights = {k: float(v) for k, v in result.weights.items()}
+            exp_return_pct = result.exp_return_pct
             note = (
                 f"Alocacao {method} depois da leitura de padroes: "
                 f"retorno esperado {result.exp_return_pct:+.1f}%, "
@@ -373,16 +451,34 @@ def decide(
     if decision_path.exists():
         previous = json.loads(decision_path.read_text(encoding="utf-8")).get("weights", {})
 
+    book = _load_book(path, capital)
+    spot = _price_map(frame)
+    capital_atual = round(_equity(book, {**book.get("last_prices", {}), **spot}), 2)
+    if exp_return_pct is None and studies:
+        held = [item for item in studies if item["asset"] in weights]
+        if held:
+            exp_return_pct = round(
+                sum(item["return_30d_pct"] for item in held) / len(held) * 12, 2
+            )
+    previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
+    _rebalance(book, weights, spot)
+    _save_book(path, book)
+
     decision = {
         "at": _now(),
         "virtual_capital": capital,
+        "capital_inicial": round(float(book["initial"]), 2),
+        "capital_atual": capital_atual,
+        "previsao": previsao,
+        "previsao_retorno_pct": exp_return_pct,
+        "previsao_horizonte": "12 meses",
         "currency": currency.upper(),
         "method": method,
         "note": note,
         "disclaimer": "Decisao virtual. Nao e uma ordem nem aconselhamento financeiro.",
         "weights": {k: round(v, 4) for k, v in weights.items()},
         "cautious": cautious,
-        "actions": _actions(previous, weights, capital),
+        "actions": _actions(previous, weights, capital_atual),
         "patterns": studies,
     }
     decision["advice"] = portfolio_advice(

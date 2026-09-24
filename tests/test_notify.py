@@ -3,6 +3,10 @@ from btcsim.notify import _message, send_decision
 
 def test_message_lists_positions_in_portuguese():
     text = _message({
+        "capital_inicial": 10000,
+        "capital_atual": 10450,
+        "previsao": 11200,
+        "previsao_horizonte": "12 meses",
         "advice": "Mantinha o núcleo em SPY.",
         "actions": [
             {"asset": "SPY", "action": "HOLD", "weight_after_pct": 80, "amount": 8000},
@@ -10,6 +14,9 @@ def test_message_lists_positions_in_portuguese():
             {"asset": "dust", "action": "HOLD", "weight_after_pct": 0.1, "amount": 10},
         ],
     })
+    assert "Capital inicial: 10 000 EUR" in text
+    assert "Capital atual: 10 450 EUR" in text
+    assert "A minha previsão (12 meses): 11 200 EUR" in text
     assert "Mantinha o núcleo em SPY." in text
     assert "Manter SPY: 8000 EUR (80%)" in text
     assert "Vender bitcoin" in text
