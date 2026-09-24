@@ -299,7 +299,7 @@
             <section class="card p-5">
               <div class="flex items-center justify-between mb-2">
                 <h2 class="text-base font-semibold">Notícias</h2>
-                <span class="text-[12px] text-slate-500">cripto · equity · commodities</span>
+                <span class="text-[12px] text-slate-500" id="w_news_mem">memória permanente</span>
               </div>
               <div id="w_news"><div class="muted text-sm">A carregar…</div></div>
             </section>
@@ -713,7 +713,7 @@ async function loadWatch() {
     if (!resp.ok) return;
     const d = await resp.json();
     if (!$('view-watch').classList.contains('active')) return;
-    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements, d.layout);
+    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements, d.layout, d.news_context);
   } catch (e) {
   } finally {
     watchLoading = false;
@@ -800,8 +800,23 @@ function renderTape(tape) {
     ${trades ? `<table class="dense"><thead><tr><th>UTC</th><th>Side</th><th>Px</th><th>EUR</th></tr></thead><tbody>${trades}</tbody></table>` : '<div class="muted text-sm">0 fills</div>'}`;
 }
 
-function renderNews(list, sources) {
-  const items = (list && list.recent_headlines) || [];
+function renderNews(list, sources, newsContext) {
+  const memSize = (newsContext && newsContext.memory_size) || (list && list.news_memory_size) || 0;
+  if ($('w_news_mem')) {
+    $('w_news_mem').textContent = memSize
+      ? `${memSize} na memória`
+      : 'a construir memória';
+  }
+  const contextBits = ((newsContext && newsContext.assets) || []).slice(0, 4).map(a => {
+    const lean = a.bias > 0.15 ? '↑' : (a.bias < -0.15 ? '↓' : '·');
+    return `${lean} ${String(a.spec || '').replace(/^stock:/i,'')} ${Number(a.bias).toFixed(2)}`;
+  }).join(' · ');
+  const summary = (newsContext && newsContext.summary)
+    || (list && list.news_context_summary)
+    || '';
+  const items = (newsContext && newsContext.recent && newsContext.recent.length)
+    ? newsContext.recent
+    : ((list && list.recent_headlines) || []);
   const buckets = new Map();
   for (const item of items) {
     const key = item.source || 'Outra';
@@ -809,13 +824,19 @@ function renderNews(list, sources) {
     const bucket = buckets.get(key);
     if (bucket.length < 2) bucket.push(item);
   }
-  const rows = [...buckets.values()].flat().map(item => {
+  const rows = [...buckets.values()].flat().slice(0, 10).map(item => {
     const src = String(item.source || '').replace(/^Yahoo Finance · /, '').replace(/^Yahoo · /, '');
-    return `<div class="feed-item"><div class="src" title="${esc(item.source)}">${esc(src)}</div><div class="title">${esc(item.title)}</div></div>`;
+    const score = typeof item.score === 'number'
+      ? `<span class="${item.score>=0?'side-buy':'side-sell'} text-[11px]">${item.score>=0?'+':''}${item.score.toFixed(2)}</span>`
+      : '';
+    return `<div class="feed-item"><div class="src" title="${esc(item.source)}">${esc(src)} ${score}</div><div class="title">${esc(item.title)}</div></div>`;
   }).join('');
   const links = (sources || []).slice(0, 4).map(s =>
     `<a class="text-brand hover:underline" href="${s.url}" target="_blank" rel="noopener">${esc(s.name.replace('Yahoo Finance · ',''))}</a>`).join(' · ');
-  $('w_news').innerHTML = `<div>${rows || '<span class="muted">Sem títulos.</span>'}</div>
+  $('w_news').innerHTML = `
+    ${summary ? `<p class="text-[12px] text-slate-400 mb-3 leading-relaxed">${esc(summary)}</p>` : ''}
+    ${contextBits ? `<p class="text-[11px] text-slate-500 mb-3 mono">${esc(contextBits)}</p>` : ''}
+    <div>${rows || '<span class="muted">Sem títulos.</span>'}</div>
     <div class="muted text-[11px] mt-3">${links}</div>`;
 }
 
@@ -1145,13 +1166,13 @@ if ($('m_more')) {
   $('m_more').addEventListener('click', () => loadMovements({ reset: false }));
 }
 
-function renderWatch(list, decision, changes, tape, sources, equity, movements, layout) {
+function renderWatch(list, decision, changes, tape, sources, equity, movements, layout, newsContext) {
   if (layout && layout.card_order && layout.card_order.length) {
     cardOrderCache = layout.card_order;
     try { localStorage.setItem('btcsim_card_order', JSON.stringify(cardOrderCache)); } catch (e) {}
   }
   renderTape(tape);
-  renderNews(list, sources);
+  renderNews(list, sources, newsContext || (decision && decision.news_context));
   const assets = (list && list.assets) || [];
 
   if (!decision) {
@@ -1240,7 +1261,7 @@ $('w_run').addEventListener('click', async () => {
     if (d.error) throw new Error(d.error);
     const listResp = await fetch('/api/watch');
     const list = await listResp.json();
-    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements, list.layout);
+    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements, list.layout, list.news_context);
   } catch (e) {
     $('w_decision').innerHTML = '<div class="err text-sm">Erro: '+e.message+'</div>';
   } finally {

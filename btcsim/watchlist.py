@@ -353,7 +353,7 @@ def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 96, per
 
 
 def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dict:
-    """Read news (or use ``headlines``) and persist watchlist changes."""
+    """Read news (or use ``headlines``), remember them, update watchlist."""
     path = path or (state_dir() / "watchlist.json")
     data = load(path)
     items = None
@@ -362,13 +362,34 @@ def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dic
         used = [item["title"] for item in items]
     else:
         used = headlines
+        items = [{"title": t, "source": "manual"} for t in used]
+
+    # Durable memory first — future cycles keep this context.
+    memory_summary = {}
+    try:
+        from . import news_memory as news_memory_mod
+
+        memory_summary = news_memory_mod.ingest(path.parent, items or used)
+    except Exception as exc:  # noqa: BLE001
+        print(f"memória de notícias falhou: {exc}")
+
     summary = apply_headlines(data, used)
     data["updated_at"] = _now()
     data["headlines_read"] = len(used)
     if items is not None:
         data["recent_headlines"] = items
+    # Keep a short pointer to the durable context on the watchlist file.
+    if memory_summary.get("context"):
+        data["news_context_summary"] = memory_summary["context"].get("summary")
+        data["news_memory_size"] = memory_summary.get("memory_size")
     save(data, path)
     summary["watchlist"] = data
+    summary["headlines_read"] = len(used)
+    summary["news_memory"] = {
+        "ingested": memory_summary.get("ingested", 0),
+        "memory_size": memory_summary.get("memory_size", 0),
+        "summary": (memory_summary.get("context") or {}).get("summary"),
+    }
     return summary
 
 
@@ -569,7 +590,12 @@ def daily_rotation_weights(studies: list[dict], eligible: set[str] | list[str]) 
     return weights
 
 
-def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[str]) -> str:
+def portfolio_advice(
+    studies: list[dict],
+    actions: list[dict],
+    cautious: list[str],
+    news_context: dict | None = None,
+) -> str:
     """One paragraph: what the automation would do with the virtual capital."""
     if not studies and not actions:
         if cautious:
@@ -586,13 +612,15 @@ def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[st
             continue
         pattern = by_asset.get(action["asset"])
         stance = pattern["stance"] if pattern else "seguir o peso da carteira"
+        bias = pattern.get("news_bias") if pattern else None
+        extra = f", memória notícias {bias:+.2f}" if isinstance(bias, (int, float)) and abs(bias) >= 0.05 else ""
         verb = {
             "BUY": "aumentava o peso",
             "SELL": "reduzia",
             "HOLD": "mantinha",
         }[action["action"]]
         sentences.append(
-            f"Em {action['asset']} {verb} para {action['weight_after_pct']:.0f}% ({stance})."
+            f"Em {action['asset']} {verb} para {action['weight_after_pct']:.0f}% ({stance}{extra})."
         )
     if cautious:
         sentences.append(
@@ -600,6 +628,9 @@ def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[st
             + ", ".join(cautious)
             + " por causa de notícias negativas recentes."
         )
+    mem = (news_context or {}).get("summary")
+    if mem and (news_context or {}).get("memory_size", 0) > 0:
+        sentences.append(f"Base de notícias: {mem}")
     if not sentences:
         return "Eu não mexia na carteira virtual neste ciclo."
     return " ".join(sentences)
@@ -912,6 +943,14 @@ def decide(
         frame = alloc_mod.load_prices(all_specs, currency=currency, days=365)
 
     studies = study_patterns(frame) if frame is not None and not frame.empty else []
+    news_context = {}
+    try:
+        from . import news_memory as news_memory_mod
+
+        news_context = news_memory_mod.load_context(path.parent)
+        studies = news_memory_mod.apply_news_bias_to_studies(studies, news_context)
+    except Exception as exc:  # noqa: BLE001
+        print(f"contexto de notícias falhou: {exc}")
     weights: dict[str, float] = {}
     exp_return_pct = None
     note = (
@@ -1041,6 +1080,12 @@ def decide(
             for f in fills
         ],
         "open_positions": positions,
+        "news_context": {
+            "summary": news_context.get("summary"),
+            "memory_size": news_context.get("memory_size", 0),
+            "updated_at": news_context.get("updated_at"),
+            "assets": (news_context.get("assets") or [])[:8],
+        },
         "patterns": studies,
         "risk_limits": {
             "max_single": MAX_SINGLE_WEIGHT,
@@ -1049,7 +1094,7 @@ def decide(
         },
     }
     decision["advice"] = portfolio_advice(
-        studies, decision["actions"], cautious
+        studies, decision["actions"], cautious, news_context=news_context
     )
     decision_path.write_text(json.dumps(decision, indent=2, ensure_ascii=False), encoding="utf-8")
     with (path.parent / "decision_log.jsonl").open("a", encoding="utf-8") as handle:
