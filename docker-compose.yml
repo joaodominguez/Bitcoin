@@ -7,6 +7,9 @@ services:
     environment:
       DASHBOARD_USER: ${DASHBOARD_USER:-btcsim}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
+      NTFY_URL: ${NTFY_URL:-https://ntfy.sh}
+      DASHBOARD_URL: ${DASHBOARD_URL:-http://91.99.167.243:8000}
     volumes:
       - btcsim-cache:/app/.cache
       - btcsim-state:/app/state
@@ -14,7 +17,11 @@ services:
   watcher:
     build: .
     restart: unless-stopped
-    command: ["python", "-m", "btcsim.watchlist", "--loop", "--every-hours", "6"]
+    command: ["python", "-m", "btcsim.watchlist", "--loop", "--every-hours", "1"]
+    environment:
+      NTFY_TOPIC: ${NTFY_TOPIC:-}
+      NTFY_URL: ${NTFY_URL:-https://ntfy.sh}
+      DASHBOARD_URL: ${DASHBOARD_URL:-http://91.99.167.243:8000}
     volumes:
       - btcsim-cache:/app/.cache
       - btcsim-state:/app/state

@@ -391,6 +391,12 @@ def decide(
     decision_path.write_text(json.dumps(decision, indent=2, ensure_ascii=False), encoding="utf-8")
     with (path.parent / "decision_log.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(decision, ensure_ascii=False) + "\n")
+    try:
+        from .notify import send_decision
+
+        send_decision(decision)
+    except Exception as exc:  # noqa: BLE001
+        print(f"push falhou: {exc}")
     return decision
 
 
@@ -408,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refresh", action="store_true", help="So ler noticias e atualizar a lista.")
     parser.add_argument("--decide", action="store_true", help="So calcular a decisao virtual atual.")
     parser.add_argument("--loop", action="store_true", help="Repetir para sempre (uso no servidor).")
-    parser.add_argument("--every-hours", type=float, default=6.0)
+    parser.add_argument("--every-hours", type=float, default=1.0)
     parser.add_argument("--capital", type=float, default=10_000.0)
     args = parser.parse_args(argv)
 

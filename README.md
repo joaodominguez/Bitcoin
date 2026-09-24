@@ -92,7 +92,7 @@ docker compose up -d --build
 
 A dashboard fica em `http://IP-DO-SERVIDOR:8000`. O contentor reinicia sozinho se o servidor reiniciar (`restart: unless-stopped`).
 
-Um segundo processo, `watcher`, corre a cada 6 horas: lê notícias públicas, pode acrescentar cripto ou ações à watchlist e grava uma decisão de alocação **virtual** (separador *Watchlist*). Não envia ordens a nenhuma corretora. A permissão para esta autonomia fica escrita em `state/watchlist.json`.
+Um segundo processo, `watcher`, corre **de hora a hora**: lê notícias públicas, pode acrescentar cripto ou ações à watchlist, grava uma decisão virtual e envia uma notificação push (ntfy), se `NTFY_TOPIC` estiver definido no `.env`. Não envia ordens a nenhuma corretora.
 
 - Define `DASHBOARD_PASSWORD` no `.env`. Sem password, qualquer pessoa que chegue à porta consegue usar a ferramenta e gastar o teu tráfego nas APIs de preços.
 - O servidor precisa de saída HTTPS (CoinGecko, Yahoo Finance e câmbio). Cerca de 512 MB de RAM chegam.
