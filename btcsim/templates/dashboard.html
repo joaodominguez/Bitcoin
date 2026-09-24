@@ -229,7 +229,7 @@
               <div class="flex items-start justify-between gap-3 mb-3">
                 <div>
                   <h2 class="text-base font-semibold">Desempenho da carteira</h2>
-                  <p class="text-[12px] text-slate-500 mt-0.5">Capital inicial → atual → previsão 12 meses</p>
+                  <p class="text-[12px] text-slate-500 mt-0.5">Virtual vs buy-and-hold SPY e Bitcoin</p>
                 </div>
                 <div class="text-right">
                   <div class="text-[11px] text-slate-500 uppercase tracking-wide">Valor atual</div>
@@ -669,7 +669,7 @@ async function loadWatch() {
     if (!resp.ok) return;
     const d = await resp.json();
     if (!$('view-watch').classList.contains('active')) return;
-    renderWatch(d.watchlist, d.decision, null, d.tape, d.news_sources, d.equity);
+    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity);
   } catch (e) {
   } finally {
     watchLoading = false;
@@ -777,20 +777,42 @@ function renderNews(list, sources) {
 
 function renderPerfChart(inicial, atual, previsao, cur, equity) {
   $('w_perf_value').innerHTML = `<span class="${cls(atual - inicial)}">${fmtCompact(atual)}</span> <span class="text-slate-500 text-sm">${cur}</span>`;
-  let trace;
+  let traces;
   if (equity && equity.dates && equity.dates.length >= 2) {
-    trace = {
+    traces = [{
+      name: 'Carteira',
       x: equity.dates,
       y: equity.portfolio,
       type: 'scatter',
       mode: 'lines',
-      fill: 'tozeroy',
       line: { color: '#2dd4bf', width: 2.2 },
-      fillcolor: 'rgba(45,212,191,0.12)',
-      hovertemplate: '%{x}<br>%{y:.2f} ' + cur + '<extra></extra>',
-    };
+      hovertemplate: 'Carteira<br>%{x}<br>%{y:.2f} ' + cur + '<extra></extra>',
+    }];
+    if (equity.spy && equity.spy.length === equity.dates.length) {
+      traces.push({
+        name: 'SPY',
+        x: equity.dates,
+        y: equity.spy,
+        type: 'scatter',
+        mode: 'lines',
+        line: { color: '#94a3b8', width: 1.6, dash: 'dot' },
+        hovertemplate: 'SPY<br>%{x}<br>%{y:.2f} ' + cur + '<extra></extra>',
+      });
+    }
+    if (equity.btc && equity.btc.length === equity.dates.length) {
+      traces.push({
+        name: 'Bitcoin',
+        x: equity.dates,
+        y: equity.btc,
+        type: 'scatter',
+        mode: 'lines',
+        line: { color: '#f59e0b', width: 1.6, dash: 'dash' },
+        hovertemplate: 'Bitcoin<br>%{x}<br>%{y:.2f} ' + cur + '<extra></extra>',
+      });
+    }
   } else {
-    trace = {
+    traces = [{
+      name: 'Carteira',
       x: ['Inicial', 'Atual', 'Previsão 12m'],
       y: [inicial, atual, previsao],
       type: 'scatter',
@@ -800,12 +822,13 @@ function renderPerfChart(inicial, atual, previsao, cur, equity) {
       marker: { size: 9, color: '#2dd4bf', line: { width: 2, color: '#0b1220' } },
       fillcolor: 'rgba(45,212,191,0.12)',
       hovertemplate: '%{x}<br>%{y:.2f} ' + cur + '<extra></extra>',
-    };
+    }];
   }
-  Plotly.newPlot('w_perf_chart', [trace], {
+  Plotly.newPlot('w_perf_chart', traces, {
     ...PLOT,
     margin: { t: 10, r: 16, b: 40, l: 54 },
-    showlegend: false,
+    showlegend: traces.length > 1,
+    legend: { orientation: 'h', y: 1.12, x: 0, font: { size: 11, color: '#94a3b8' } },
     yaxis: { ...PLOT.yaxis, tickformat: ',.0f', separatethousands: true },
   }, {responsive: true, displayModeBar: false});
 }
@@ -952,7 +975,8 @@ function renderWatch(list, decision, changes, tape, sources, equity) {
   const spot = tape && tape.spot_usd ? Math.round(tape.spot_usd).toLocaleString('pt-PT') + ' USD' : '—';
 
   $('w_advice').textContent = decision.advice || '';
-  $('w_meta').textContent = `${when} UTC · ${decision.disclaimer || ''}`;
+  const changedNote = (changes && changes.summary) || (equity && equity.changed && equity.changed.summary) || '';
+  $('w_meta').textContent = `${when} UTC · ${changedNote} ${decision.disclaimer || ''}`.trim();
   $('w_metrics').innerHTML = `
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Inicial</div><div class="mono text-lg mt-1">${fmtCompact(inicial)} <span class="text-slate-500 text-sm">${cur}</span></div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Atual</div><div class="mono text-lg mt-1 ${cls(delta)}">${fmtCompact(atual)}</div></div>

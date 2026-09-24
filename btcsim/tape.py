@@ -407,6 +407,107 @@ def cycle(
     return {"moved_eur": round(moved, 2), "fills": fills, "tape": view(tape, now=now), **capitals}
 
 
+def _aligned_btc_frames(days: int = 180):
+    from . import data as data_mod
+
+    usd = data_mod.fetch(days=days, currency="usd", coin="bitcoin")
+    eur = data_mod.fetch(days=days, currency="eur", coin="bitcoin")
+    frame = usd.frame.join(eur.frame, lsuffix="_usd", rsuffix="_eur", how="inner").dropna()
+    frame = frame.rename(columns={"price_usd": "usd", "price_eur": "eur"})
+    return frame
+
+
+def backtest_sleeve(
+    frame=None,
+    *,
+    days: int = 180,
+    budget_eur: float = BUDGET_EUR,
+    slice_eur: float = SLICE_EUR,
+    dip_fracs: tuple[float, ...] = DIP_FRACS,
+    fee_rate: float = FEE_RATE,
+    min_net: float = MIN_NET,
+) -> dict:
+    """Replay the adaptive sleeve on daily BTC closes (USD + EUR).
+
+    Cautious by design: buys only after deep pullbacks from the rolling 30-day
+    high, sells only when the round-trip clears fees + min_net. Cash that never
+    fills stays cash — better idle than catching a knife early.
+    """
+    if frame is None:
+        frame = _aligned_btc_frames(days)
+    if frame.empty or len(frame) < 35:
+        raise ValueError("histórico BTC insuficiente para o backtest do sleeve")
+
+    tape = fresh_state()
+    tape["budget_eur"] = float(budget_eur)
+    tape["slice_eur"] = float(slice_eur)
+    tape["fee_rate"] = float(fee_rate)
+    tape["min_net"] = float(min_net)
+    tape["cash_eur"] = float(budget_eur)
+    tape["funded"] = True
+    tape["note"] = (
+        f"Backtest adaptativo (−{int(dip_fracs[0]*100)}/−"
+        f"{int(dip_fracs[1]*100)}/−{int(dip_fracs[2]*100)}/−"
+        f"{int(dip_fracs[3]*100)}% do máx. 30d)."
+    )
+
+    dates: list[str] = []
+    equity_curve: list[float] = []
+    hold_curve: list[float] = []
+    cash_only = float(budget_eur)
+    first_eur = float(frame["eur"].iloc[0])
+    hold_units = (budget_eur / (1 + fee_rate)) / first_eur if first_eur > 0 else 0.0
+
+    usd_vals = frame["usd"].astype(float)
+    for i, (ts, row) in enumerate(frame.iterrows()):
+        window = usd_vals.iloc[max(0, i - 29) : i + 1]
+        high = float(window.max())
+        # Do not keep a watermark forever in backtest — use rolling high only.
+        tape["anchor_high_usd"] = None
+        tape["levels_usd"] = levels_from_high(high, dip_fracs)
+        tape["anchor_high_usd"] = round(high, 2)
+        spot = {"usd": float(row["usd"]), "eur": float(row["eur"])}
+        step(tape, spot, now=ts.to_pydatetime().replace(tzinfo=timezone.utc))
+        eq = equity(tape, spot_eur=spot["eur"])
+        hold = hold_units * spot["eur"]
+        dates.append(ts.strftime("%Y-%m-%d"))
+        equity_curve.append(round(eq, 2))
+        hold_curve.append(round(hold, 2))
+
+    end = equity_curve[-1] if equity_curve else cash_only
+    hold_end = hold_curve[-1] if hold_curve else cash_only
+    buys = [t for t in tape.get("trades") or [] if t.get("side") == "BUY"]
+    sells = [t for t in tape.get("trades") or [] if t.get("side") == "SELL"]
+    open_spent = sum(float(l.get("spent_eur") or 0) for l in tape.get("lots") or [])
+    return {
+        "days": len(dates),
+        "budget_eur": budget_eur,
+        "dip_fracs": list(dip_fracs),
+        "start": dates[0] if dates else None,
+        "end": dates[-1] if dates else None,
+        "dates": dates,
+        "sleeve_curve": equity_curve,
+        "hold_curve": hold_curve,
+        "sleeve_end": round(end, 2),
+        "hold_end": round(hold_end, 2),
+        "cash_idle_end": round(float(tape.get("cash_eur") or 0.0), 2),
+        "open_lots": len(tape.get("lots") or []),
+        "open_spent_eur": round(open_spent, 2),
+        "buys": len(buys),
+        "sells": len(sells),
+        "realized_pnl_eur": round(float(tape.get("realized_pnl_eur") or 0.0), 2),
+        "vs_hold_eur": round(end - hold_end, 2),
+        "vs_hold_pct": round((end / hold_end - 1) * 100, 2) if hold_end else None,
+        "stance": "alert",
+        "note": (
+            "Sleeve cauteloso: só entra em dips profundos. Em mercados laterais "
+            "ou em alta, pode ficar atrás do buy-and-hold — isso é intencional "
+            "enquanto o risco de um movimento forte no Bitcoin estiver elevado."
+        ),
+        "trades": (tape.get("trades") or [])[-20:],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="btcsim.tape",
@@ -414,7 +515,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--every-minutes", type=float, default=15.0)
+    parser.add_argument(
+        "--backtest",
+        action="store_true",
+        help="Replay do sleeve adaptativo nos últimos N dias (dinheiro virtual).",
+    )
+    parser.add_argument("--days", type=int, default=180, help="Dias para --backtest.")
     args = parser.parse_args(argv)
+
+    if args.backtest:
+        report = backtest_sleeve(days=args.days)
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
 
     def once() -> None:
         print(json.dumps(cycle(), indent=2, ensure_ascii=False))
