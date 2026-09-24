@@ -214,7 +214,7 @@
           </button>
           <div class="min-w-0">
             <h1 id="page_title" class="text-[15px] sm:text-base font-semibold truncate">Mercado</h1>
-            <p id="page_sub" class="text-[11px] text-slate-500 truncate">Posições, desempenho e tape</p>
+            <p id="page_sub" class="text-[11px] text-slate-500 truncate">Posições abertas, desempenho e tape</p>
           </div>
         </div>
         <div class="flex items-center gap-2 sm:gap-3">
@@ -229,9 +229,10 @@
       <main class="flex-1 p-4 sm:p-6 space-y-5">
         <!-- WATCH -->
         <div class="view active" id="view-watch">
-          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="w_top_cards">
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="w_top_cards" title="Arrasta os cards para mudar a ordem">
             <div class="card p-4"><div class="muted text-sm">A carregar…</div></div>
           </div>
+          <p class="text-[11px] text-slate-500 mt-2" id="w_cards_hint">Arrasta os cards — a ordem fica memorizada.</p>
 
           <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-5">
             <section class="card xl:col-span-2 p-5">
@@ -320,12 +321,13 @@
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4 border-b border-slate-800">
               <div>
                 <h2 class="text-base font-semibold">Histórico de movimentos</h2>
-                <p class="text-[12px] text-slate-500">Todas as compras, vendas e manter (carteira e sleeve BTC)</p>
+                <p class="text-[12px] text-slate-500">Preço e PnL nas compras/vendas — «Manter» é só peso em aberto</p>
               </div>
               <div class="flex flex-wrap items-center gap-2" id="m_filters">
-                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter active" data-origin="">Todos</button>
-                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-origin="carteira">Carteira</button>
-                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-origin="sleeve_btc">Sleeve BTC</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter active" data-side="BUY,SELL" data-origin="">Compras/Vendas</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-side="" data-origin="">Todos</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-side="" data-origin="carteira">Carteira</button>
+                <button type="button" class="btn text-[12px] px-2.5 py-1 m-filter" data-side="" data-origin="sleeve_btc">Sleeve BTC</button>
                 <span class="text-[12px] text-slate-500 ml-1" id="m_count"></span>
               </div>
             </div>
@@ -493,7 +495,7 @@ function esc(value) {
 }
 
 const PAGE = {
-  watch: { title: 'Mercado', sub: 'Posições, desempenho e tape' },
+  watch: { title: 'Mercado', sub: 'Posições abertas, desempenho e tape' },
   movements: { title: 'Movimentos', sub: 'Histórico completo de compras e vendas' },
   strategies: { title: 'Estratégias', sub: 'Simular curvas e métricas' },
   allocate: { title: 'Alocação', sub: 'Otimizar pesos da carteira' },
@@ -711,7 +713,7 @@ async function loadWatch() {
     if (!resp.ok) return;
     const d = await resp.json();
     if (!$('view-watch').classList.contains('active')) return;
-    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements);
+    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements, d.layout);
   } catch (e) {
   } finally {
     watchLoading = false;
@@ -875,43 +877,126 @@ function renderPerfChart(inicial, atual, previsao, cur, equity) {
   }, {responsive: true, displayModeBar: false});
 }
 
-function renderTopCards(actions, patterns) {
+function renderTopCards(positions, patterns, layout, actions) {
   const byName = {};
   (patterns || []).forEach(p => { byName[String(p.asset || '').toLowerCase()] = p; });
-  const top = (actions || [])
-    .filter(a => a.weight_after_pct >= 0.5 || a.action === 'SELL')
-    .slice(0, 4);
+  let top = (positions || []).filter(p => Number(p.amount) > 0.5);
+  // Fallback: old decisions without open_positions
+  if (!top.length && actions) {
+    top = (actions || [])
+      .filter(a => a.weight_after_pct >= 0.5)
+      .map(a => ({
+        asset: a.asset,
+        amount: a.amount,
+        weight_pct: a.weight_after_pct,
+        action: a.action,
+        pnl_eur: null,
+        origin: 'carteira',
+      }));
+  }
+  const saved = (layout && layout.card_order) || cardOrderCache || [];
+  if (saved.length) {
+    const rank = new Map(saved.map((k, i) => [String(k).toLowerCase(), i]));
+    top = top.slice().sort((a, b) => {
+      const ia = rank.has(String(a.asset).toLowerCase()) ? rank.get(String(a.asset).toLowerCase()) : 999;
+      const ib = rank.has(String(b.asset).toLowerCase()) ? rank.get(String(b.asset).toLowerCase()) : 999;
+      return ia - ib;
+    });
+  }
   if (!top.length) {
-    $('w_top_cards').innerHTML = '<div class="card p-4 col-span-full muted text-sm">Sem posições abertas.</div>';
+    $('w_top_cards').innerHTML = '<div class="card p-4 col-span-full muted text-sm">Sem posições abertas — capital em cash virtual.</div>';
     return;
   }
-  $('w_top_cards').innerHTML = top.map(a => {
-    const meta = assetInfo(a.asset);
-    const key = String(a.asset || '').replace(/^stock:/i, '').toLowerCase();
-    const pat = byName[key] || byName[String(a.asset || '').toLowerCase()];
-    const ret = pat && typeof pat.return_30d_pct === 'number' ? pat.return_30d_pct : null;
-    const pill = ret == null
-      ? `<span class="pill-hold">${ACTION_PT[a.action] || a.action}</span>`
-      : `<span class="${ret >= 0 ? 'pill-up' : 'pill-down'}">${sign(ret)}%</span>`;
-    return `<div class="card p-4">
+  $('w_top_cards').innerHTML = top.map(p => {
+    const meta = assetInfo(p.asset);
+    const key = String(p.asset || '').replace(/^stock:/i, '').toLowerCase();
+    const pat = byName[key] || byName[String(p.asset || '').toLowerCase()];
+    const ret1 = (typeof p.return_1d_pct === 'number')
+      ? p.return_1d_pct
+      : (pat && typeof pat.return_1d_pct === 'number' ? pat.return_1d_pct : null);
+    const dayPnl = (typeof p.day_pnl_eur === 'number')
+      ? p.day_pnl_eur
+      : (ret1 != null && p.amount != null ? Number(p.amount) * ret1 / 100 : null);
+    const pnl = typeof p.pnl_eur === 'number' ? p.pnl_eur : null;
+    // Prefer today's € move; fall back to cost-basis PnL when day move is flat/unknown.
+    const show = (dayPnl != null && Math.abs(dayPnl) >= 0.005) ? dayPnl
+      : (pnl != null && Math.abs(pnl) >= 0.005 ? pnl : dayPnl);
+    const showLabel = (dayPnl != null && Math.abs(dayPnl) >= 0.005) ? '1d'
+      : (pnl != null && Math.abs(pnl) >= 0.005 ? 'PnL' : '1d');
+    const pill = show == null
+      ? `<span class="pill-hold">${ACTION_PT[p.action] || p.action || 'Manter'}</span>`
+      : `<span class="${show >= 0 ? 'pill-up' : 'pill-down'}">${sign(show)} € ${showLabel}</span>`;
+    const origin = p.origin === 'sleeve_btc' ? 'sleeve BTC' : (pat && pat.class ? pat.class : (meta.area_pt || ''));
+    const weight = Number(p.weight_pct != null ? p.weight_pct : p.weight_after_pct || 0);
+    const subVar = show == null
+      ? ''
+      : ` · ${show >= 0 ? '+' : ''}${show.toFixed(2)} € ${showLabel}`;
+    return `<div class="card p-4 cursor-grab active:cursor-grabbing select-none" draggable="true" data-asset="${esc(p.asset)}">
       <div class="flex items-start justify-between gap-2">
         <div class="flex items-center gap-3 min-w-0">
           <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="${meta.color}"></circle><text x="16" y="20.5" text-anchor="middle" font-size="${meta.mark.length>3?7:9}" font-family="Plus Jakarta Sans,sans-serif" font-weight="700" fill="#0b1220">${meta.mark}</text></svg>
           <div class="min-w-0">
             <div class="font-semibold truncate">${meta.mark}</div>
-            <div class="text-[12px] text-slate-500 truncate">${meta.label}${meta.area_pt ? ' · ' + meta.area_pt : ''}</div>
+            <div class="text-[12px] text-slate-500 truncate">${meta.label}${origin ? ' · ' + origin : ''}</div>
           </div>
         </div>
         ${pill}
       </div>
-      <div class="mono text-xl font-semibold mt-4">${fmtCompact(a.amount)}</div>
+      <div class="mono text-xl font-semibold mt-4">${fmtCompact(p.amount)}</div>
       <div class="flex items-center justify-between mt-1 text-[12px] text-slate-500">
-        <span>Peso ${a.weight_after_pct.toFixed(1)}%</span>
-        <span class="${ACTION_CLASS[a.action] || ''}">${ACTION_PT[a.action] || a.action}</span>
+        <span>Peso ${weight.toFixed(1)}%${ret1 != null ? ' · ' + sign(ret1) + '% 1d' : ''}</span>
+        <span class="${ACTION_CLASS[p.action] || ''}">${ACTION_PT[p.action] || p.action || 'Manter'}${subVar}</span>
       </div>
-      <div class="wbar"><i style="width:${Math.min(100, a.weight_after_pct)}%"></i></div>
+      <div class="wbar"><i style="width:${Math.min(100, weight)}%"></i></div>
     </div>`;
   }).join('');
+  bindCardDrag($('w_top_cards'));
+}
+
+let cardOrderCache = [];
+try {
+  cardOrderCache = JSON.parse(localStorage.getItem('btcsim_card_order') || '[]') || [];
+} catch (e) { cardOrderCache = []; }
+
+let dragAsset = null;
+
+function bindCardDrag(root) {
+  if (!root) return;
+  root.querySelectorAll('[draggable=true]').forEach(card => {
+    card.addEventListener('dragstart', (ev) => {
+      dragAsset = card.getAttribute('data-asset');
+      card.classList.add('opacity-60');
+      try { ev.dataTransfer.setData('text/plain', dragAsset); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('opacity-60');
+      dragAsset = null;
+      persistCardOrder(root);
+    });
+    card.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      const over = ev.currentTarget;
+      if (!dragAsset || over.getAttribute('data-asset') === dragAsset) return;
+      const dragging = root.querySelector('[data-asset="' + dragAsset.replace(/"/g, '') + '"]');
+      if (!dragging || dragging === over) return;
+      const cards = [...root.querySelectorAll('[data-asset]')];
+      const from = cards.indexOf(dragging);
+      const to = cards.indexOf(over);
+      if (from < to) root.insertBefore(dragging, over.nextSibling);
+      else root.insertBefore(dragging, over);
+    });
+  });
+}
+
+function persistCardOrder(root) {
+  const order = [...root.querySelectorAll('[data-asset]')].map(el => el.getAttribute('data-asset'));
+  cardOrderCache = order;
+  try { localStorage.setItem('btcsim_card_order', JSON.stringify(order)); } catch (e) {}
+  fetch('/api/ui/layout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ card_order: order }),
+  }).catch(() => {});
 }
 
 function renderWatchlistSide(assets, patterns) {
@@ -952,7 +1037,7 @@ function movementsTableHtml(items, { compact = false } = {}) {
     return '<div class="p-5 muted text-sm">Sem movimentos.</div>';
   }
   const head = compact
-    ? `<thead><tr><th>Data</th><th>Lado</th><th>Ativo</th><th>Valor</th><th>Origem</th></tr></thead>`
+    ? `<thead><tr><th>Data</th><th>Lado</th><th>Ativo</th><th>Valor</th><th>Preço</th><th>PnL</th></tr></thead>`
     : `<thead><tr><th>Data/hora</th><th>Lado</th><th>Ativo</th><th>Qtd / EUR</th><th>Preço</th><th>Origem</th><th>PnL</th></tr></thead>`;
   const body = items.map(m => {
     const side = m.side || '';
@@ -963,22 +1048,31 @@ function movementsTableHtml(items, { compact = false } = {}) {
       ? Number(m.quantity).toLocaleString('pt-PT', { maximumFractionDigits: 6 })
       : null;
     let price = '—';
-    if (m.price_usd != null) price = Math.round(m.price_usd).toLocaleString('pt-PT') + ' USD';
-    else if (m.price_eur != null) price = fmtCompact(m.price_eur) + ' EUR';
+    if (m.price_eur != null) price = fmtCompact(m.price_eur) + ' EUR';
+    else if (m.price_usd != null) price = Math.round(m.price_usd).toLocaleString('pt-PT') + ' USD';
     const weight = m.weight_after_pct != null
       ? ` · ${Number(m.weight_after_pct).toFixed(1)}%`
       : '';
-    const valueCell = qty ? `${qty} · ${amount}` : (amount + weight);
-    const pnl = m.pnl_eur == null
-      ? '—'
-      : `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)}</span>`;
+    const valueCell = qty ? `${qty} u · ${amount}` : (amount + weight);
+    let pnl;
+    if (side === 'HOLD') {
+      pnl = '<span class="text-slate-500">—</span>';
+    } else if (side === 'BUY') {
+      pnl = '<span class="text-slate-500">aberto</span>';
+    } else if (m.pnl_eur == null) {
+      pnl = '<span class="text-slate-500">s/ hist.</span>';
+    } else {
+      const label = Number(m.pnl_eur) >= 0 ? 'lucro' : 'prejuízo';
+      pnl = `<span class="${cls(m.pnl_eur)}">${fmtCompact(m.pnl_eur)} <span class="text-[10px] uppercase">${label}</span></span>`;
+    }
     if (compact) {
       return `<tr>
         <td class="mono">${esc(fmtWhen(m.at).slice(0, 16))}</td>
         <td><span class="${ACTION_PILL[side] || 'pill-hold'}">${esc(sideLabel)}</span></td>
         <td>${assetCell(m.asset || '—', 20)}</td>
         <td class="mono">${amount}</td>
-        <td class="text-slate-400">${esc(origin)}</td>
+        <td class="mono text-[12px]">${price}</td>
+        <td class="mono">${pnl}</td>
       </tr>`;
     }
     return `<tr>
@@ -1001,7 +1095,7 @@ function renderTransactions(movementsPayload) {
   $('w_transactions').innerHTML = movementsTableHtml(items.slice(0, 12), { compact: true });
 }
 
-let movementsState = { origin: '', offset: 0, limit: 100, items: [], total: 0, loading: false };
+let movementsState = { origin: '', side: 'BUY,SELL', offset: 0, limit: 100, items: [], total: 0, loading: false };
 
 async function loadMovements({ reset = false } = {}) {
   if (movementsState.loading) return;
@@ -1015,6 +1109,7 @@ async function loadMovements({ reset = false } = {}) {
     p.set('limit', String(movementsState.limit));
     p.set('offset', String(movementsState.offset));
     if (movementsState.origin) p.set('origin', movementsState.origin);
+    if (movementsState.side) p.set('side', movementsState.side);
     const resp = await fetch('/api/movements?' + p.toString());
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const d = await resp.json();
@@ -1042,6 +1137,7 @@ document.querySelectorAll('.m-filter').forEach(btn => {
     document.querySelectorAll('.m-filter').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     movementsState.origin = btn.dataset.origin || '';
+    movementsState.side = btn.dataset.side || '';
     loadMovements({ reset: true });
   });
 });
@@ -1049,7 +1145,11 @@ if ($('m_more')) {
   $('m_more').addEventListener('click', () => loadMovements({ reset: false }));
 }
 
-function renderWatch(list, decision, changes, tape, sources, equity, movements) {
+function renderWatch(list, decision, changes, tape, sources, equity, movements, layout) {
+  if (layout && layout.card_order && layout.card_order.length) {
+    cardOrderCache = layout.card_order;
+    try { localStorage.setItem('btcsim_card_order', JSON.stringify(cardOrderCache)); } catch (e) {}
+  }
   renderTape(tape);
   renderNews(list, sources);
   const assets = (list && list.assets) || [];
@@ -1089,12 +1189,12 @@ function renderWatch(list, decision, changes, tape, sources, equity, movements) 
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Inicial</div><div class="mono text-lg mt-1">${fmtCompact(inicial)} <span class="text-slate-500 text-sm">${cur}</span></div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Atual</div><div class="mono text-lg mt-1 ${cls(delta)}">${fmtCompact(atual)}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ</div><div class="mono text-lg mt-1 ${cls(delta)}">${sign(delta)} <span class="text-sm">(${sign(deltaPct)}%)</span></div></div>
-    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Previsão 12m</div><div class="mono text-lg mt-1 ${cls(previsao - atual)}">${fmtCompact(previsao)}</div></div>
+    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ hoje</div><div class="mono text-lg mt-1 ${cls(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}">${fmtCompact(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">BTC spot</div><div class="mono text-lg mt-1">${spot}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Sleeve</div><div class="mono text-lg mt-1">${fmtCompact((tape && tape.cash_eur) || 0)} <span class="text-slate-500 text-sm">EUR</span></div></div>`;
 
   renderPerfChart(inicial, atual, previsao, cur, equity);
-  renderTopCards(decision.actions || [], decision.patterns || []);
+  renderTopCards(decision.open_positions || [], decision.patterns || [], layout, decision.actions || []);
   renderWatchlistSide(assets, decision.patterns || []);
   renderTransactions(movements);
 
@@ -1140,7 +1240,7 @@ $('w_run').addEventListener('click', async () => {
     if (d.error) throw new Error(d.error);
     const listResp = await fetch('/api/watch');
     const list = await listResp.json();
-    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements);
+    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements, list.layout);
   } catch (e) {
     $('w_decision').innerHTML = '<div class="err text-sm">Erro: '+e.message+'</div>';
   } finally {

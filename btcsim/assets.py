@@ -21,7 +21,9 @@ CATALOG: tuple[dict, ...] = (
     {"spec": "stock:TSLA", "label": "Tesla", "mark": "TSLA", "area": "auto", "area_pt": "Automóvel", "group": "Ações", "color": "#f43f5e", "needles": ("tsla", "tesla")},
     {"spec": "stock:META", "label": "Meta", "mark": "META", "area": "tech", "area_pt": "Tecnologia", "group": "Ações", "color": "#60a5fa", "needles": ("meta platforms", "facebook")},
     {"spec": "stock:SPY", "label": "S&P 500", "mark": "SPY", "area": "index", "area_pt": "Índice", "group": "Ações", "color": "#94a3b8", "needles": ("s&p 500", "s&p500", "sp500")},
+    {"spec": "stock:QQQ", "label": "Nasdaq 100", "mark": "QQQ", "area": "index", "area_pt": "Índice", "group": "Ações", "color": "#38bdf8", "needles": ("nasdaq", "qqq", "nasdaq 100")},
     {"spec": "stock:GLD", "label": "Ouro", "mark": "AU", "area": "metals", "area_pt": "Metais", "group": "Matérias-primas", "color": "#eab308", "needles": ("gold", "ouro", "bullion")},
+    {"spec": "stock:SLV", "label": "Prata", "mark": "AG", "area": "metals", "area_pt": "Metais", "group": "Matérias-primas", "color": "#cbd5e1", "needles": ("silver", "prata")},
     {"spec": "stock:USO", "label": "Petróleo", "mark": "OIL", "area": "energy", "area_pt": "Energia", "group": "Matérias-primas", "color": "#64748b", "needles": ("crude oil", "crude", "oil", "petroleum", "petroleo", "petróleo", "wti", "brent")},
 )
 
@@ -60,7 +62,9 @@ YAHOO_SYMBOL = {
     "stock:TSLA": "TSLA",
     "stock:META": "META",
     "stock:SPY": "SPY",
+    "stock:QQQ": "QQQ",
     "stock:GLD": "GLD",
+    "stock:SLV": "SLV",
     "stock:USO": "USO",
 }
 

@@ -58,10 +58,52 @@ UNIVERSE: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
     (item["spec"], item["needles"]) for item in CATALOG
 )
 
-SEED_SPECS = ("bitcoin", "ethereum", "stock:SPY", "stock:AAPL", "stock:MSFT")
-MAX_ASSETS = 12
+SEED_SPECS = (
+    "bitcoin",
+    "ethereum",
+    "stock:SPY",
+    "stock:QQQ",
+    "stock:AAPL",
+    "stock:MSFT",
+    "stock:NVDA",
+    "stock:GLD",
+    "stock:USO",
+)
+MAX_ASSETS = 14
 ADD_THRESHOLD = 0.2
 CAUTION_THRESHOLD = -0.2
+
+# Class buckets for daily rotation (equity / ETF / commodities / tech / crypto).
+CLASS_OF = {
+    "bitcoin": "crypto",
+    "ethereum": "crypto",
+    "solana": "crypto",
+    "cardano": "crypto",
+    "dogecoin": "crypto",
+    "ripple": "crypto",
+    "binancecoin": "crypto",
+    "aapl": "tech",
+    "msft": "tech",
+    "googl": "tech",
+    "nvda": "tech",
+    "meta": "tech",
+    "amzn": "consumer",
+    "tsla": "auto",
+    "spy": "etf",
+    "qqq": "etf",
+    "gld": "commodity",
+    "slv": "commodity",
+    "uso": "commodity",
+}
+CLASS_BUDGET = {
+    "tech": 0.38,
+    "etf": 0.22,
+    "commodity": 0.18,
+    "consumer": 0.12,
+    "auto": 0.08,
+    "crypto": 0.12,  # still light; deep BTC dips stay on the sleeve
+}
+MAX_NAMES_IN_BOOK = 6
 
 
 def state_dir() -> Path:
@@ -114,7 +156,27 @@ def load(path: Path | None = None) -> dict:
         data = _empty()
         save(data, path)
         return data
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    # Keep older books current: add any missing seed specs (QQQ, commodities, …).
+    have = {a.get("spec") for a in data.get("assets") or []}
+    changed = False
+    for spec in SEED_SPECS:
+        if spec in have:
+            continue
+        if len(data.get("assets") or []) >= MAX_ASSETS:
+            break
+        data.setdefault("assets", []).append({
+            "spec": spec,
+            "added_at": _now(),
+            "reason": "universo multi-classe",
+            "headline": "",
+            "score": 0.0,
+            "caution": False,
+        })
+        changed = True
+    if changed:
+        save(data, path)
+    return data
 
 
 def save(data: dict, path: Path | None = None) -> None:
@@ -310,8 +372,16 @@ def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dic
     return summary
 
 
-def _actions(previous: dict[str, float], target: dict[str, float], capital: float) -> list[dict]:
+def _actions(
+    previous: dict[str, float],
+    target: dict[str, float],
+    capital: float,
+    prices: dict[str, float] | None = None,
+    fills: list[dict] | None = None,
+) -> list[dict]:
     names = sorted(set(previous) | set(target))
+    prices = prices or {}
+    by_fill = {(f.get("asset"), f.get("side")): f for f in (fills or [])}
     actions = []
     for name in names:
         before = float(previous.get(name, 0.0))
@@ -319,7 +389,7 @@ def _actions(previous: dict[str, float], target: dict[str, float], capital: floa
         delta = after - before
         if after == 0 and before == 0:
             continue
-        if abs(delta) < 0.02 and after > 0 and before > 0:
+        if abs(delta) < 0.012 and after > 0 and before > 0:
             side = "HOLD"
         elif delta > 0:
             side = "BUY"
@@ -327,12 +397,23 @@ def _actions(previous: dict[str, float], target: dict[str, float], capital: floa
             side = "SELL"
         else:
             side = "HOLD"
+        fill = by_fill.get((name, side)) or {}
+        px = fill.get("price_eur")
+        if px is None:
+            px = prices.get(name)
+        traded = fill.get("amount_eur")
+        if traded is None and side in {"BUY", "SELL"}:
+            traded = round(abs(delta) * capital, 2)
         actions.append({
             "asset": name,
             "action": side,
             "weight_before_pct": round(before * 100, 2),
             "weight_after_pct": round(after * 100, 2),
             "amount": round(after * capital, 2),
+            "traded_eur": traded,
+            "price_eur": round(float(px), 4) if px is not None else None,
+            "quantity": fill.get("units"),
+            "pnl_eur": fill.get("pnl_eur"),
         })
     return actions
 
@@ -355,6 +436,8 @@ def study_patterns(prices) -> list[dict]:
         sma_slow = indicators.sma(series, 50).iloc[-1] if len(series) >= 50 else float("nan")
         rsi_now = float(indicators.rsi(series, 14).iloc[-1])
         ret_30 = float(series.iloc[-1] / series.iloc[-30] - 1.0)
+        ret_1 = float(series.iloc[-1] / series.iloc[-2] - 1.0) if len(series) >= 2 else 0.0
+        ret_5 = float(series.iloc[-1] / series.iloc[-6] - 1.0) if len(series) >= 6 else ret_1
         window = series.iloc[-60:] if len(series) >= 60 else series
         drawdown = last / float(window.max()) - 1.0
 
@@ -397,16 +480,93 @@ def study_patterns(prices) -> list[dict]:
             stance = "esperar"
             reading = "Os sinais não apontam na mesma direção. Eu não mudava a posição por este padrão."
 
+        edge = round(
+            ret_1 * 100 * 2.2
+            + ret_5 * 100 * 1.1
+            + (8.0 if trend.startswith("alta") else -6.0)
+            + (0.0 if 40 <= rsi_now <= 65 else (-10.0 if rsi_now >= 70 else -4.0)),
+            2,
+        )
         studies.append({
             "asset": name,
             "trend": trend,
             "rsi": round(rsi_now, 1),
+            "return_1d_pct": round(ret_1 * 100, 2),
+            "return_5d_pct": round(ret_5 * 100, 2),
             "return_30d_pct": round(ret_30 * 100, 1),
             "drawdown_pct": round(drawdown * 100, 1),
+            "edge_score": edge,
             "stance": stance,
             "reading": reading,
+            "class": CLASS_OF.get(str(name).lower(), "other"),
         })
     return studies
+
+
+def _asset_class(name: str) -> str:
+    key = str(name).replace("stock:", "").lower()
+    return CLASS_OF.get(key, "other")
+
+
+def daily_rotation_weights(studies: list[dict], eligible: set[str] | list[str]) -> dict[str, float]:
+    """Pick a diversified book tilted to short-term edge (virtual daily rotation).
+
+    Prefers names with positive 1d/5d momentum, healthy RSI, and uptrend — across
+    tech, ETFs, commodities and a light crypto sleeve. Takes profit / cuts losers
+    by simply leaving weak names at weight 0.
+    """
+    allowed_bare = {str(x).replace("stock:", "").lower() for x in eligible}
+    ranked = []
+    for item in studies:
+        asset = str(item["asset"])
+        bare = asset.replace("stock:", "").lower()
+        if bare not in allowed_bare:
+            continue
+        if item.get("stance") == "não perseguir" and float(item.get("return_1d_pct") or 0) < 0.05:
+            continue
+        ranked.append(item)
+    ranked.sort(key=lambda x: float(x.get("edge_score") or 0), reverse=True)
+
+    def _fill(candidates: list[dict], *, min_edge: float) -> dict[str, float]:
+        picked: list[dict] = []
+        class_used: dict[str, float] = {}
+        for item in candidates:
+            if float(item.get("edge_score") or 0) < min_edge:
+                continue
+            cls = item.get("class") or _asset_class(item["asset"])
+            budget = CLASS_BUDGET.get(cls, 0.10)
+            used = class_used.get(cls, 0.0)
+            if used >= budget - 1e-6:
+                continue
+            if len(picked) >= MAX_NAMES_IN_BOOK:
+                break
+            if cls == "crypto" and float(item.get("edge_score") or 0) < 1.5:
+                continue
+            room = budget - used
+            edge = max(0.5, float(item.get("edge_score") or 0.5))
+            slot = min(room, MAX_SINGLE_WEIGHT, 0.08 + edge * 0.012)
+            if slot < 0.04:
+                continue
+            picked.append({**item, "class": cls, "slot": slot})
+            class_used[cls] = used + slot
+        if not picked:
+            return {}
+        raw = {str(p["asset"]): float(p["slot"]) for p in picked}
+        total = sum(raw.values())
+        max_invested = 1.0 - MIN_CASH_WEIGHT
+        if total > max_invested and total > 0:
+            scale = max_invested / total
+            raw = {k: v * scale for k, v in raw.items()}
+        return {k: round(v, 6) for k, v in raw.items() if v > 1e-6}
+
+    # Prefer clear short-term edge; if the tape is quiet, still rotate the least-bad names.
+    weights = _fill(ranked, min_edge=0.0)
+    if not weights:
+        weights = _fill(ranked, min_edge=-8.0)
+    if not weights and ranked:
+        top = ranked[0]
+        weights = {str(top["asset"]): 0.25}
+    return weights
 
 
 def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[str]) -> str:
@@ -516,16 +676,25 @@ def _breakeven(cost: float, fee_rate: float) -> float:
     return float(cost) * (1 + fee_rate) / (1 - fee_rate)
 
 
-def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], fee_rate: float = 0.001) -> float:
-    """Move the virtual book to ``weights`` of its current value. Returns that value.
+def _rebalance(
+    book: dict,
+    weights: dict[str, float],
+    prices: dict[str, float],
+    fee_rate: float = 0.001,
+) -> tuple[float, list[dict]]:
+    """Move the virtual book to ``weights``. Returns (equity_before, fills).
 
-    Bitcoin is not sold below its cost after fees. A falling price is held.
+    Each fill carries price, quantity, notional and (on sells) realized PnL so
+    the movements ledger can show lucro/prejuízo clearly. Bitcoin is not sold
+    below its cost after fees.
     """
     merged = {**book.get("last_prices", {}), **prices}
     equity = _equity(book, merged)
     units = {k: float(v) for k, v in book.get("units", {}).items()}
     cash = float(book.get("cash", 0.0))
     costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
+    realized = float(book.get("realized_pnl_eur") or 0.0)
+    fills: list[dict] = []
     for asset, qty in units.items():
         if asset not in costs and merged.get(asset) and qty > 0:
             costs[asset] = float(merged[asset])
@@ -543,10 +712,24 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
                 if cost and px < _breakeven(cost, fee_rate):
                     continue
             sell_val = current - target
-            cash += sell_val * (1 - fee_rate)
+            sold_units = sell_val / px
+            avg_cost = float(costs.get(asset, px))
+            proceeds = sell_val * (1 - fee_rate)
+            pnl = proceeds - sold_units * avg_cost
+            realized += pnl
+            cash += proceeds
             units[asset] = target / px if target > 0 else 0.0
             if units[asset] <= 1e-10:
                 costs.pop(asset, None)
+            fills.append({
+                "side": "SELL",
+                "asset": asset,
+                "units": sold_units,
+                "price_eur": float(px),
+                "amount_eur": round(proceeds, 2),
+                "pnl_eur": round(pnl, 2),
+                "cost_eur": round(sold_units * avg_cost, 2),
+            })
 
     for asset, target in targets.items():
         px = merged.get(asset)
@@ -561,25 +744,158 @@ def _rebalance(book: dict, weights: dict[str, float], prices: dict[str, float], 
             costs[asset] = (old_units * old_cost + buy_val) / new_units
             cash -= buy_val * (1 + fee_rate)
             units[asset] = new_units
+            fills.append({
+                "side": "BUY",
+                "asset": asset,
+                "units": buy_val / px,
+                "price_eur": float(px),
+                "amount_eur": round(buy_val * (1 + fee_rate), 2),
+                "pnl_eur": None,
+                "cost_eur": round(buy_val, 2),
+            })
 
     book["units"] = {k: v for k, v in units.items() if v > 1e-10}
     book["cash"] = cash
     book["last_prices"] = merged
     book["cost_eur"] = {k: v for k, v in costs.items() if k in book["units"]}
-    return equity
+    book["realized_pnl_eur"] = round(realized, 2)
+    return equity, fills
+
+
+def _anchor_costs_to_prior_close(book: dict, frame) -> None:
+    """When cost equals today's mark (init bug / same-day daily close), anchor to yesterday.
+
+    Daily OHLC data only moves once per day, so buying at today's close leaves
+    unrealized PnL stuck at 0 until tomorrow. Anchoring to the prior close makes
+    the open PnL reflect today's market move — what the desk should show.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return
+    units = book.get("units") or {}
+    prices = book.get("last_prices") or {}
+    costs = {k: float(v) for k, v in (book.get("cost_eur") or {}).items()}
+    changed = False
+    for asset, qty in units.items():
+        if float(qty) <= 0:
+            continue
+        px = float(prices.get(asset) or 0.0)
+        if px <= 0 or asset not in frame.columns:
+            continue
+        series = frame[asset].dropna()
+        if len(series) < 2:
+            continue
+        prior = float(series.iloc[-2])
+        cur = float(series.iloc[-1])
+        avg = float(costs.get(asset) or px)
+        # Cost locked to today's print → no visible variation.
+        if abs(avg - px) / px < 1e-6 or abs(avg - cur) / cur < 1e-6:
+            costs[asset] = prior
+            changed = True
+        elif asset not in costs:
+            costs[asset] = prior
+            changed = True
+    if changed:
+        book["cost_eur"] = costs
+
+
+def open_positions(
+    book: dict,
+    *,
+    total_capital: float,
+    tape: dict | None = None,
+    actions: list[dict] | None = None,
+    studies: list[dict] | None = None,
+) -> list[dict]:
+    """Real open lots for the desk cards (book units + BTC sleeve lots)."""
+    by_action = {}
+    for action in actions or []:
+        by_action[str(action.get("asset") or "").lower()] = action
+    by_study = {}
+    for item in studies or []:
+        by_study[str(item.get("asset") or "").lower()] = item
+
+    prices = book.get("last_prices") or {}
+    costs = book.get("cost_eur") or {}
+    units = book.get("units") or {}
+    rows: list[dict] = []
+    for asset, qty in units.items():
+        qty = float(qty)
+        if qty <= 1e-10:
+            continue
+        px = float(prices.get(asset) or 0.0)
+        if px <= 0:
+            continue
+        value = qty * px
+        avg = float(costs.get(asset) or px)
+        cost_basis = qty * avg
+        pnl = value - cost_basis
+        study = by_study.get(str(asset).lower()) or {}
+        ret1 = study.get("return_1d_pct")
+        day_pnl = round(value * float(ret1) / 100.0, 2) if ret1 is not None else None
+        act = by_action.get(str(asset).lower()) or {}
+        rows.append({
+            "asset": asset,
+            "origin": "carteira",
+            "units": round(qty, 8),
+            "price_eur": round(px, 4),
+            "amount": round(value, 2),
+            "cost_eur": round(cost_basis, 2),
+            "pnl_eur": round(pnl, 2),
+            "pnl_pct": round((pnl / cost_basis) * 100, 2) if cost_basis else 0.0,
+            "day_pnl_eur": day_pnl,
+            "return_1d_pct": ret1,
+            "weight_pct": round((value / total_capital) * 100, 2) if total_capital else 0.0,
+            "action": act.get("action") or "HOLD",
+            "open": True,
+        })
+
+    if tape:
+        spot_eur = None
+        if tape.get("last_spot"):
+            spot_eur = tape["last_spot"].get("eur")
+        btc_study = by_study.get("bitcoin") or {}
+        for lot in tape.get("lots") or []:
+            units_lot = float(lot.get("units") or 0)
+            if units_lot <= 0:
+                continue
+            px = float(spot_eur or lot.get("price_eur") or 0)
+            spent = float(lot.get("spent_eur") or 0)
+            value = units_lot * px
+            pnl = value - spent
+            ret1 = btc_study.get("return_1d_pct")
+            day_pnl = round(value * float(ret1) / 100.0, 2) if ret1 is not None else None
+            rows.append({
+                "asset": "bitcoin",
+                "origin": "sleeve_btc",
+                "units": round(units_lot, 8),
+                "price_eur": round(px, 4),
+                "amount": round(value, 2),
+                "cost_eur": round(spent, 2),
+                "pnl_eur": round(pnl, 2),
+                "pnl_pct": round((pnl / spent) * 100, 2) if spent else 0.0,
+                "day_pnl_eur": day_pnl,
+                "return_1d_pct": ret1,
+                "weight_pct": round((value / total_capital) * 100, 2) if total_capital else 0.0,
+                "action": "HOLD",
+                "open": True,
+                "level_usd": lot.get("level_usd"),
+            })
+
+    rows.sort(key=lambda r: float(r.get("amount") or 0), reverse=True)
+    return rows
 
 
 def decide(
     path: Path | None = None,
     capital: float = 10_000.0,
     currency: str = "eur",
-    method: str = "min_variance",
+    method: str = "daily_rotation",
     prices=None,
 ) -> dict:
     """Allocate virtual capital across the watchlist and store the decision.
 
-    Assets flagged ``caution`` by a bearish headline are left at weight 0
-    (a virtual sell) until a later bullish headline clears the flag.
+    Default ``daily_rotation`` tilts to short-term edge across tech / ETF /
+    commodities / crypto (light). Assets flagged ``caution`` stay at weight 0.
     """
     path = path or (state_dir() / "watchlist.json")
     data = load(path)
@@ -598,28 +914,49 @@ def decide(
     studies = study_patterns(frame) if frame is not None and not frame.empty else []
     weights: dict[str, float] = {}
     exp_return_pct = None
-    note = "Alocacao defensiva (minima variancia) sobre a watchlist, depois de ler os padroes."
+    note = (
+        "Rotação diária virtual: reforço o que sobe com RSI saudável "
+        "(tech, ETF, commodities; cripto leve) e corto o que perde força."
+    )
     if not eligible:
         note = "Todas as posicoes estao em cautela. Decisao: ficar em cash virtual."
     elif frame is not None:
         wanted = [_spec_name(spec) for spec in eligible]
         book = frame[[c for c in wanted if c in frame.columns]]
         names = list(book.columns)
-        if len(names) == 1:
-            weights = {names[0]: 1.0}
-        elif len(names) >= 2:
-            returns = alloc_mod.daily_returns(book)
-            result = alloc_mod.optimize(names, returns, method=method, n_samples=8_000)
-            weights = {k: float(v) for k, v in result.weights.items()}
-            exp_return_pct = result.exp_return_pct
-            note = (
-                f"Alocacao {method} depois da leitura de padroes: "
-                f"retorno esperado {result.exp_return_pct:+.1f}%, "
-                f"volatilidade {result.exp_volatility_pct:.1f}%."
-            )
+        eligible_names = set(names)
+        if method == "daily_rotation":
+            weights = daily_rotation_weights(studies, eligible_names)
+            if weights:
+                held = [s for s in studies if s["asset"] in weights]
+                if held:
+                    # Annualise a blend of 5d momentum as a rough forecast label.
+                    avg5 = sum(float(s.get("return_5d_pct") or 0) for s in held) / len(held)
+                    exp_return_pct = round(avg5 * (252 / 5), 2)
+                note = (
+                    "Rotação diária por classes (tech / ETF / commodities / cripto leve): "
+                    f"{len(weights)} posições com melhor edge de curto prazo."
+                )
+            elif len(names) == 1:
+                weights = {names[0]: 1.0}
+            elif len(names) >= 2:
+                method = "min_variance"
+        if method != "daily_rotation" and not weights:
+            if len(names) == 1:
+                weights = {names[0]: 1.0}
+            elif len(names) >= 2:
+                returns = alloc_mod.daily_returns(book)
+                result = alloc_mod.optimize(names, returns, method=method, n_samples=8_000)
+                weights = {k: float(v) for k, v in result.weights.items()}
+                exp_return_pct = result.exp_return_pct
+                note = (
+                    f"Alocacao {method} depois da leitura de padroes: "
+                    f"retorno esperado {result.exp_return_pct:+.1f}%, "
+                    f"volatilidade {result.exp_volatility_pct:.1f}%."
+                )
 
     weights = apply_risk_limits(weights)
-    if weights and note.startswith("Alocacao"):
+    if weights and ("Rotação" in note or note.startswith("Alocacao")):
         note += (
             f" Limites: max {MAX_SINGLE_WEIGHT:.0%} por ativo, "
             f"max {MAX_CRYPTO_WEIGHT:.0%} cripto, min {MIN_CASH_WEIGHT:.0%} cash."
@@ -639,23 +976,49 @@ def decide(
             exp_return_pct = round(
                 sum(item["return_30d_pct"] for item in held) / len(held) * 12, 2
             )
-    from .tape import mark_to_market
+    from .tape import load_tape, mark_to_market
 
+    fills: list[dict] = []
     with book_lock(path.parent):
         book = _load_book(path, capital)
+        # Merge latest marks before anchoring costs / equity.
+        if spot:
+            book["last_prices"] = {**book.get("last_prices", {}), **spot}
+        _anchor_costs_to_prior_close(book, frame)
         capital_atual = round(
             _equity(book, {**book.get("last_prices", {}), **spot}) + mark_to_market(path.parent),
             2,
         )
         previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
-        _rebalance(book, weights, spot)
+        _equity_before, fills = _rebalance(book, weights, spot)
+        capital_atual = round(
+            _equity(book, book.get("last_prices") or {}) + mark_to_market(path.parent),
+            2,
+        )
+        previsao = round(capital_atual * (1 + (exp_return_pct or 0) / 100), 2)
         _save_book(path, book)
+        tape_state = load_tape(path.parent)
 
+    actions = _actions(previous, weights, capital_atual, prices=spot, fills=fills)
+    positions = open_positions(
+        book,
+        total_capital=capital_atual,
+        tape=tape_state,
+        actions=actions,
+        studies=studies,
+    )
     decision = {
         "at": _now(),
         "virtual_capital": capital,
         "capital_inicial": round(float(book["initial"]), 2),
         "capital_atual": capital_atual,
+        "cash_eur": round(float(book.get("cash") or 0.0), 2),
+        "realized_pnl_eur": round(float(book.get("realized_pnl_eur") or 0.0), 2),
+        "unrealized_pnl_eur": round(sum(float(p.get("pnl_eur") or 0) for p in positions), 2),
+        "day_pnl_eur": round(
+            sum(float(p["day_pnl_eur"]) for p in positions if p.get("day_pnl_eur") is not None),
+            2,
+        ),
         "previsao": previsao,
         "previsao_retorno_pct": exp_return_pct,
         "previsao_horizonte": "12 meses",
@@ -665,7 +1028,19 @@ def decide(
         "disclaimer": "Decisao virtual. Nao e uma ordem nem aconselhamento financeiro.",
         "weights": {k: round(v, 4) for k, v in weights.items()},
         "cautious": cautious,
-        "actions": _actions(previous, weights, capital_atual),
+        "actions": actions,
+        "fills": [
+            {
+                "side": f["side"],
+                "asset": f["asset"],
+                "units": round(float(f["units"]), 8),
+                "price_eur": round(float(f["price_eur"]), 4),
+                "amount_eur": f["amount_eur"],
+                "pnl_eur": f.get("pnl_eur"),
+            }
+            for f in fills
+        ],
+        "open_positions": positions,
         "patterns": studies,
         "risk_limits": {
             "max_single": MAX_SINGLE_WEIGHT,

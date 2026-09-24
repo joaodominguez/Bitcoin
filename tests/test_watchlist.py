@@ -147,8 +147,9 @@ def test_decision_includes_advice(tmp_path):
     assert "bitcoin" in decision["advice"]
     assert decision["patterns"][0]["asset"] == "bitcoin"
     assert decision["capital_inicial"] == 10000
-    assert decision["capital_atual"] == 10000
+    assert abs(decision["capital_atual"] - 10000) < 5  # fees on first fill
     assert decision["previsao"] > 0
+    assert decision.get("open_positions") is not None
 
 
 def test_second_decision_can_hold(tmp_path):

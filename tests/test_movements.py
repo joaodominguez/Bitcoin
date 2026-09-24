@@ -19,6 +19,49 @@ def _decision(at: str, actions: list[dict]) -> dict:
     }
 
 
+def test_record_book_fills_include_price_and_pnl(tmp_path: Path):
+    decision = {
+        "at": "2026-09-24T12:00:00+00:00",
+        "currency": "EUR",
+        "fills": [
+            {
+                "side": "BUY",
+                "asset": "MSFT",
+                "units": 2.0,
+                "price_eur": 400.0,
+                "amount_eur": 800.8,
+                "pnl_eur": None,
+            },
+            {
+                "side": "SELL",
+                "asset": "NVDA",
+                "units": 1.0,
+                "price_eur": 120.0,
+                "amount_eur": 119.88,
+                "pnl_eur": 15.5,
+            },
+        ],
+        "actions": [
+            {
+                "asset": "MSFT",
+                "action": "HOLD",
+                "weight_after_pct": 20,
+                "amount": 2000,
+                "price_eur": 400.0,
+            }
+        ],
+    }
+    assert M.record_book_decision(tmp_path, decision) == 3
+    rows = M.load_movements(tmp_path, side="BUY,SELL", limit=10)
+    assert len(rows) == 2
+    sell = next(r for r in rows if r["side"] == "SELL")
+    assert sell["price_eur"] == 120.0
+    assert sell["pnl_eur"] == 15.5
+    buy = next(r for r in rows if r["side"] == "BUY")
+    assert buy["price_eur"] == 400.0
+    assert buy["pnl_eur"] is None
+
+
 def test_record_book_and_tape_dedup(tmp_path: Path):
     decision = _decision(
         "2026-09-24T10:00:00+00:00",
@@ -88,6 +131,9 @@ def test_backfill_from_decision_log_and_tape(tmp_path: Path):
                         "weight_before_pct": 50,
                         "weight_after_pct": 0,
                         "amount": 0,
+                        "traded_eur": 500.0,
+                        "price_eur": 450.0,
+                        "pnl_eur": -12.5,
                     }
                 ],
             )

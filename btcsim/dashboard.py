@@ -290,6 +290,9 @@ def api_watch():
 
     equity = history_mod.series_payload(watchlist_mod.state_dir())
     movements = movements_mod.movements_payload(watchlist_mod.state_dir(), limit=30)
+    from . import layout as layout_mod
+
+    layout = layout_mod.load_layout(watchlist_mod.state_dir())
     return jsonify({
         "watchlist": data,
         "decision": decision,
@@ -298,7 +301,20 @@ def api_watch():
         "equity": equity,
         "changed": equity.get("changed"),
         "movements": movements,
+        "layout": layout,
     })
+
+
+@app.route("/api/ui/layout", methods=["GET", "POST"])
+def api_ui_layout():
+    from . import layout as layout_mod
+
+    directory = watchlist_mod.state_dir()
+    if request.method == "GET":
+        return jsonify(layout_mod.load_layout(directory))
+    payload = request.get_json(silent=True) or {}
+    saved = layout_mod.save_layout(directory, payload)
+    return jsonify(saved)
 
 
 @app.route("/api/movements")
@@ -313,9 +329,10 @@ def api_movements():
         if origin not in (None, "carteira", "sleeve_btc"):
             origin = None
         if side:
-            side = side.upper()
-            if side not in ("BUY", "SELL", "HOLD"):
-                side = None
+            parts = [p.strip().upper() for p in side.split(",") if p.strip()]
+            allowed = {"BUY", "SELL", "HOLD"}
+            parts = [p for p in parts if p in allowed]
+            side = ",".join(parts) if parts else None
         payload = movements_mod.movements_payload(
             watchlist_mod.state_dir(),
             limit=limit,

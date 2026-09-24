@@ -20,8 +20,9 @@ def movements_path(directory: Path) -> Path:
     return Path(directory) / MOVEMENTS_FILE
 
 
-def _book_id(at: str, asset: str, side: str) -> str:
-    return f"book:{at}:{asset}:{side}"
+def _book_id(at: str, asset: str, side: str, extra: str = "") -> str:
+    suffix = f":{extra}" if extra else ""
+    return f"book:{at}:{asset}:{side}{suffix}"
 
 
 def _tape_id(at: str, side: str, level: float | None, price_usd: float | None) -> str:
@@ -33,7 +34,10 @@ def _tape_id(at: str, side: str, level: float | None, price_usd: float | None) -
 def row_from_book_action(at: str, action: dict, currency: str = "EUR") -> dict:
     side = str(action.get("action") or "HOLD").upper()
     asset = str(action.get("asset") or "")
-    amount = float(action.get("amount") or 0.0)
+    traded = action.get("traded_eur")
+    amount = float(traded if traded is not None else (action.get("amount") or 0.0))
+    price = action.get("price_eur")
+    pnl = action.get("pnl_eur")
     return {
         "id": _book_id(at, asset, side),
         "at": at,
@@ -41,14 +45,41 @@ def row_from_book_action(at: str, action: dict, currency: str = "EUR") -> dict:
         "side_pt": SIDE_PT.get(side, side),
         "asset": asset,
         "amount_eur": round(amount, 2),
-        "quantity": None,
-        "price_eur": None,
+        "quantity": action.get("quantity"),
+        "price_eur": round(float(price), 4) if price is not None else None,
         "price_usd": None,
         "origin": "carteira",
         "origin_pt": ORIGIN_PT["carteira"],
-        "pnl_eur": None,
+        "pnl_eur": round(float(pnl), 2) if pnl is not None else None,
         "weight_before_pct": action.get("weight_before_pct"),
         "weight_after_pct": action.get("weight_after_pct"),
+        "currency": currency,
+    }
+
+
+def row_from_book_fill(at: str, fill: dict, currency: str = "EUR") -> dict:
+    side = str(fill.get("side") or "").upper()
+    asset = str(fill.get("asset") or "")
+    price = fill.get("price_eur")
+    amount = float(fill.get("amount_eur") or 0.0)
+    pnl = fill.get("pnl_eur")
+    units = fill.get("units")
+    extra = f"{float(price or 0):.4f}:{float(units or 0):.6f}"
+    return {
+        "id": _book_id(at, asset, side, extra=extra),
+        "at": at,
+        "side": side,
+        "side_pt": SIDE_PT.get(side, side),
+        "asset": asset,
+        "amount_eur": round(amount, 2),
+        "quantity": units,
+        "price_eur": round(float(price), 4) if price is not None else None,
+        "price_usd": None,
+        "origin": "carteira",
+        "origin_pt": ORIGIN_PT["carteira"],
+        "pnl_eur": round(float(pnl), 2) if pnl is not None else None,
+        "weight_before_pct": None,
+        "weight_after_pct": None,
         "currency": currency,
     }
 
@@ -118,8 +149,21 @@ def append_rows(directory: Path, rows: list[dict]) -> int:
 
 
 def record_book_decision(directory: Path, decision: dict) -> int:
+    """Prefer real fills (price + PnL). Fall back to weight actions."""
     at = str(decision.get("at") or "")
     currency = str(decision.get("currency") or "EUR")
+    fills = decision.get("fills") or []
+    if fills:
+        rows = [row_from_book_fill(at, fill, currency=currency) for fill in fills]
+        # Also keep HOLD rows lightly so the desk still shows standing weights,
+        # but only when there is a mark price.
+        for action in decision.get("actions") or []:
+            if str(action.get("action") or "").upper() != "HOLD":
+                continue
+            if action.get("price_eur") is None:
+                continue
+            rows.append(row_from_book_action(at, action, currency=currency))
+        return append_rows(directory, rows)
     rows = [
         row_from_book_action(at, action, currency=currency)
         for action in decision.get("actions") or []
@@ -147,8 +191,13 @@ def backfill(directory: Path) -> int:
                 continue
             at = str(decision.get("at") or "")
             currency = str(decision.get("currency") or "EUR")
-            for action in decision.get("actions") or []:
-                rows.append(row_from_book_action(at, action, currency=currency))
+            fills = decision.get("fills") or []
+            if fills:
+                for fill in fills:
+                    rows.append(row_from_book_fill(at, fill, currency=currency))
+            else:
+                for action in decision.get("actions") or []:
+                    rows.append(row_from_book_action(at, action, currency=currency))
 
     tape_path = directory / "tape.json"
     if tape_path.exists():
@@ -174,6 +223,26 @@ def ensure_backfill(directory: Path) -> int:
     return backfill(directory)
 
 
+def _row_matches(
+    row: dict,
+    *,
+    origin: str | None = None,
+    side: str | None = None,
+) -> bool:
+    if origin and row.get("origin") != origin:
+        return False
+    if side:
+        wanted = {s.strip().upper() for s in str(side).split(",") if s.strip()}
+        if str(row.get("side") or "").upper() not in wanted:
+            return False
+    side_u = str(row.get("side") or "").upper()
+    if side_u in {"BUY", "SELL"}:
+        if row.get("price_eur") is None and row.get("price_usd") is None:
+            if abs(float(row.get("amount_eur") or 0.0)) < 0.01:
+                return False
+    return True
+
+
 def load_movements(
     directory: Path,
     *,
@@ -194,9 +263,7 @@ def load_movements(
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if origin and row.get("origin") != origin:
-            continue
-        if side and str(row.get("side") or "").upper() != side.upper():
+        if not _row_matches(row, origin=origin, side=side):
             continue
         rows.append(row)
     rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
@@ -224,11 +291,8 @@ def movements_payload(
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if origin and row.get("origin") != origin:
-                continue
-            if side and str(row.get("side") or "").upper() != side.upper():
-                continue
-            total += 1
+            if _row_matches(row, origin=origin, side=side):
+                total += 1
     items = load_movements(
         directory, limit=limit, offset=offset, origin=origin, side=side
     )
@@ -238,7 +302,7 @@ def movements_payload(
         "limit": max(1, min(int(limit), 1000)),
         "offset": max(0, int(offset)),
         "note": (
-            "Histórico virtual de movimentos da carteira (rebalanceamento) "
-            "e do sleeve BTC (fills). Dinheiro virtual apenas."
+            "Compras/vendas com preço e PnL (quando a venda fecha lucro ou prejuízo). "
+            "«Manter» é só peso em aberto. Dinheiro virtual."
         ),
     }
