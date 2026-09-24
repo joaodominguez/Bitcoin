@@ -215,6 +215,7 @@
       <h3 style="margin-top:0;">A tua carteira virtual</h3>
       <p class="muted">Isto é o que a automação faria com 10 000 € virtuais. Não foi enviada nenhuma ordem a uma corretora.</p>
       <p class="muted">A decisão junta duas coisas: notícias (entrar ou ficar de fora) e o padrão do preço (comprar, manter ou não perseguir).</p>
+      <p class="muted">A carteira atualiza sozinha a cada 30 segundos.</p>
       <button id="w_run">▶ Ler notícias outra vez</button>
     </aside>
     <main>
@@ -339,7 +340,6 @@ function render(d) {
 
 $('run').addEventListener('click', run);
 let strategiesLoaded = false;
-window.addEventListener('load', loadWatch);
 
 // ---- Tab switching ----
 let allocLoaded = false;
@@ -463,11 +463,36 @@ function renderAlloc(d) {
 
 $('a_run').addEventListener('click', runAlloc);
 
+const WATCH_REFRESH_MS = 30000;
+let watchLoading = false;
+
 async function loadWatch() {
-  const resp = await fetch('/api/watch');
-  const d = await resp.json();
-  renderWatch(d.watchlist, d.decision, null, d.tape);
+  if (watchLoading) return;
+  watchLoading = true;
+  try {
+    const resp = await fetch('/api/watch');
+    if (!resp.ok) return;
+    const d = await resp.json();
+    if (!$('view-watch').classList.contains('active')) return;
+    renderWatch(d.watchlist, d.decision, null, d.tape);
+  } catch (e) {
+    // Mantém a última leitura se a rede falhar.
+  } finally {
+    watchLoading = false;
+  }
 }
+
+window.addEventListener('load', () => {
+  loadWatch();
+  setInterval(() => {
+    if (document.hidden) return;
+    if (!$('view-watch').classList.contains('active')) return;
+    loadWatch();
+  }, WATCH_REFRESH_MS);
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && $('view-watch').classList.contains('active')) loadWatch();
+});
 
 const ACTION_PT = { BUY: 'Comprar', SELL: 'Vender', HOLD: 'Manter' };
 

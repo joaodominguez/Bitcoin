@@ -22,6 +22,13 @@ def test_open_when_no_password(client):
     assert resp.status_code == 200
 
 
+def test_portfolio_page_refreshes_itself(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "WATCH_REFRESH_MS = 30000" in html
+    assert "setInterval" in html
+    assert "A carteira atualiza sozinha" in html
+
+
 def test_password_protects_pages(monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
     monkeypatch.setenv("DASHBOARD_USER", "btcsim")
