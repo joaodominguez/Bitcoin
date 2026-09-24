@@ -14,6 +14,32 @@ def test_collect_titles_keeps_every_source():
     assert "Crude oil falls" in titles
 
 
+def test_yahoo_feeds_cover_crypto_stocks_and_commodities():
+    blob = " ".join(url for _, url in W.yahoo_feed_urls())
+    assert "BTC-USD" in blob
+    assert "NVDA" in blob
+    assert "GC%3DF" in blob
+    assert "CL%3DF" in blob
+    names = [item["name"] for item in W.news_sources()]
+    assert any("últimas" in name for name in names)
+    assert any("Nvidia" in name for name in names)
+
+
+def test_rss_titles_reads_items():
+    payload = b"""<?xml version="1.0"?><rss><channel>
+      <item><title>Bitcoin rallies</title></item>
+      <item><title> </title></item>
+      <item><title>Nvidia surges</title></item>
+    </channel></rss>"""
+    assert W.rss_titles(payload, limit=5) == ["Bitcoin rallies", "Nvidia surges"]
+
+
+def test_rate_headline_reaches_bitcoin_without_naming_it():
+    specs = W.influenced_specs("Treasury yield hits a high after the Fed rate hike")
+    assert "bitcoin" in specs
+    assert "stock:GLD" in specs
+
+
 def test_gold_and_oil_are_recognized():
     assert "stock:GLD" in W.mentions("Gold price hits a record high")
     assert "stock:USO" in W.mentions("Crude oil plunges as demand drops")

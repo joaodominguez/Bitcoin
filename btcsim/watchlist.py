@@ -28,14 +28,29 @@ import pandas as pd
 import requests
 
 from . import allocation as alloc_mod
-from .assets import CATALOG
+from urllib.parse import quote
+
+from .assets import CATALOG, YAHOO_MACRO, YAHOO_SYMBOL
 from .news import score_text
 
-DEFAULT_FEEDS = (
-    "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "https://cointelegraph.com/rss",
-    "https://feeds.marketwatch.com/marketwatch/topstories/",
-    "https://oilprice.com/rss/main",
+# RSS mirrors of the public pages. Yahoo's HTML topic/quote pages are the same
+# news as these feeds, which a program can actually read.
+RSS_FEEDS = (
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("Cointelegraph", "https://cointelegraph.com/rss"),
+    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
+    ("OilPrice", "https://oilprice.com/rss/main"),
+)
+YAHOO_LATEST = "https://finance.yahoo.com/news/rssindex"
+YAHOO_HEADLINE = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbols}&region=US&lang=en-US"
+DEFAULT_FEEDS = tuple(url for _, url in RSS_FEEDS)
+
+# A headline about rates, inflation or the dollar moves assets even when it
+# never says their name.
+MACRO_LINKS = (
+    (("federal reserve", "rate hike", "rate cut", "treasury yield", "bond yield"), ("bitcoin", "ethereum", "stock:SPY", "stock:GLD")),
+    (("inflation", "consumer price"), ("bitcoin", "stock:SPY", "stock:GLD")),
+    (("dollar index", "us dollar"), ("bitcoin", "stock:GLD")),
 )
 
 # (asset spec, phrases that count as a mention)
@@ -120,6 +135,26 @@ def mentions(text: str) -> list[str]:
     return found
 
 
+def macro_specs(text: str) -> list[str]:
+    """Assets a macro headline can move even without naming them."""
+    lowered = text.lower()
+    found = []
+    for needles, specs in MACRO_LINKS:
+        if any(needle in lowered for needle in needles):
+            for spec in specs:
+                if spec not in found:
+                    found.append(spec)
+    return found
+
+
+def influenced_specs(text: str) -> list[str]:
+    found = mentions(text)
+    for spec in macro_specs(text):
+        if spec not in found:
+            found.append(spec)
+    return found
+
+
 def apply_headlines(data: dict, headlines: list[str]) -> dict:
     """Update the watchlist from headlines. Returns a summary of changes."""
     added, cautioned, skipped = [], [], []
@@ -127,7 +162,7 @@ def apply_headlines(data: dict, headlines: list[str]) -> dict:
 
     for headline in headlines:
         score = score_text(headline)
-        for spec in mentions(headline):
+        for spec in influenced_specs(headline):
             entry = known.get(spec)
             if score >= ADD_THRESHOLD and entry is None:
                 if len(data["assets"]) >= MAX_ASSETS:
@@ -170,36 +205,106 @@ def collect_titles(per_source: list[list[str]], per_feed: int = 12, limit: int =
     return titles
 
 
-def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 48, per_feed: int = 12) -> list[str]:
-    """Pull recent titles from public RSS feeds. Failures are skipped."""
-    per_source: list[list[str]] = []
-    for url in feeds:
-        titles: list[str] = []
-        try:
-            resp = requests.get(url, timeout=20, headers={"User-Agent": "btcsim/0.1"})
-            resp.raise_for_status()
-            root = ET.fromstring(resp.content)
-        except Exception:  # noqa: BLE001
+def rss_titles(payload: bytes, limit: int) -> list[str]:
+    root = ET.fromstring(payload)
+    titles = []
+    for item in root.iter("item"):
+        title = (item.findtext("title") or "").strip()
+        if not title:
             continue
-        for item in root.iter("item"):
-            title = (item.findtext("title") or "").strip()
-            if title:
-                titles.append(title)
-            if len(titles) >= per_feed:
-                break
-        if titles:
-            per_source.append(titles)
-    return collect_titles(per_source, per_feed=per_feed, limit=limit)
+        titles.append(title)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
+def yahoo_feed_urls(batch: int = 4) -> list[tuple[str, str]]:
+    """RSS for the same news as finance.yahoo.com/topic/latest-news and /quote/TICKER/news."""
+    symbols = [YAHOO_SYMBOL[item["spec"]] for item in CATALOG] + list(YAHOO_MACRO)
+    feeds = [("Yahoo Finance · últimas", YAHOO_LATEST)]
+    for start in range(0, len(symbols), batch):
+        chunk = symbols[start:start + batch]
+        encoded = ",".join(quote(symbol, safe="") for symbol in chunk)
+        label = "Yahoo Finance · " + ", ".join(chunk)
+        feeds.append((label, YAHOO_HEADLINE.format(symbols=encoded)))
+    return feeds
+
+
+def news_sources() -> list[dict]:
+    """Human pages, shown on the dashboard. The fetcher reads their RSS."""
+    return [
+        {"name": "Yahoo Finance · últimas", "url": "https://finance.yahoo.com/topic/latest-news/"},
+        {"name": "Yahoo Finance · Bitcoin", "url": "https://finance.yahoo.com/quote/BTC-USD/news/"},
+        {"name": "Yahoo Finance · Nvidia", "url": "https://finance.yahoo.com/quote/NVDA/news/"},
+        {"name": "Yahoo Finance · ouro", "url": "https://finance.yahoo.com/quote/GC=F/news/"},
+        {"name": "Yahoo Finance · petróleo", "url": "https://finance.yahoo.com/quote/CL=F/news/"},
+        {"name": "CoinDesk", "url": "https://www.coindesk.com/"},
+        {"name": "Cointelegraph", "url": "https://cointelegraph.com/"},
+        {"name": "MarketWatch", "url": "https://www.marketwatch.com/"},
+        {"name": "OilPrice", "url": "https://oilprice.com/"},
+    ]
+
+
+def _pull_rss(source: str, url: str, per_feed: int) -> list[dict]:
+    try:
+        resp = requests.get(
+            url,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0 btcsim/0.1"},
+        )
+        resp.raise_for_status()
+        return [{"title": title, "source": source} for title in rss_titles(resp.content, per_feed)]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def fetch_news_items(per_feed: int = 8, limit: int = 96) -> list[dict]:
+    """Titles from crypto, stock, commodity and macro sources. One source cannot fill the list."""
+    groups = []
+    for source, url in RSS_FEEDS:
+        items = _pull_rss(source, url, per_feed)
+        if items:
+            groups.append(items)
+    for source, url in yahoo_feed_urls():
+        items = _pull_rss(source, url, per_feed)
+        if items:
+            groups.append(items)
+    flat = collect_titles([[item["title"] for item in group] for group in groups], per_feed=per_feed, limit=limit)
+    # Rebuild source tags for the titles that survived the cap, in the same order.
+    lookup = {}
+    for group in groups:
+        for item in group:
+            lookup.setdefault(item["title"], item["source"])
+    return [{"title": title, "source": lookup.get(title, "")} for title in flat]
+
+
+def fetch_headlines(feeds: tuple[str, ...] = DEFAULT_FEEDS, limit: int = 96, per_feed: int = 8) -> list[str]:
+    """Pull recent titles. ``feeds`` is kept for tests; the live path reads every source."""
+    if feeds is not DEFAULT_FEEDS:
+        per_source = []
+        for url in feeds:
+            items = _pull_rss("feed", url, per_feed)
+            if items:
+                per_source.append([item["title"] for item in items])
+        return collect_titles(per_source, per_feed=per_feed, limit=limit)
+    return [item["title"] for item in fetch_news_items(per_feed=per_feed, limit=limit)]
 
 
 def refresh(path: Path | None = None, headlines: list[str] | None = None) -> dict:
     """Read news (or use ``headlines``) and persist watchlist changes."""
     path = path or (state_dir() / "watchlist.json")
     data = load(path)
-    used = headlines if headlines is not None else fetch_headlines()
+    items = None
+    if headlines is None:
+        items = fetch_news_items()
+        used = [item["title"] for item in items]
+    else:
+        used = headlines
     summary = apply_headlines(data, used)
     data["updated_at"] = _now()
     data["headlines_read"] = len(used)
+    if items is not None:
+        data["recent_headlines"] = items
     save(data, path)
     summary["watchlist"] = data
     return summary

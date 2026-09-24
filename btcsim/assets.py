@@ -43,6 +43,31 @@ def ui_catalog() -> dict[str, dict]:
     return out
 
 
+# Yahoo Finance quote used for that asset's own news page.
+YAHOO_SYMBOL = {
+    "bitcoin": "BTC-USD",
+    "ethereum": "ETH-USD",
+    "solana": "SOL-USD",
+    "cardano": "ADA-USD",
+    "dogecoin": "DOGE-USD",
+    "ripple": "XRP-USD",
+    "binancecoin": "BNB-USD",
+    "stock:AAPL": "AAPL",
+    "stock:MSFT": "MSFT",
+    "stock:GOOGL": "GOOGL",
+    "stock:AMZN": "AMZN",
+    "stock:NVDA": "NVDA",
+    "stock:TSLA": "TSLA",
+    "stock:META": "META",
+    "stock:SPY": "SPY",
+    "stock:GLD": "GLD",
+    "stock:USO": "USO",
+}
+
+# Not positions. Headlines here move crypto, stocks and commodities together.
+YAHOO_MACRO = ("CL=F", "GC=F", "^TNX", "DX-Y.NYB")
+
+
 def groups() -> list[tuple[str, list[dict]]]:
     order = ("Cripto", "Ações", "Matérias-primas")
     buckets: dict[str, list[dict]] = {name: [] for name in order}

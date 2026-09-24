@@ -285,7 +285,12 @@ def api_watch():
     if decision_path.exists():
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
     tape = tape_mod.view(tape_mod.load_tape(watchlist_mod.state_dir()))
-    return jsonify({"watchlist": data, "decision": decision, "tape": tape})
+    return jsonify({
+        "watchlist": data,
+        "decision": decision,
+        "tape": tape,
+        "news_sources": watchlist_mod.news_sources(),
+    })
 
 
 @app.route("/api/watch/run")

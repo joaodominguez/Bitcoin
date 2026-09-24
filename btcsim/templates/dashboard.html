@@ -237,6 +237,10 @@
         <div id="w_decision"><p class="muted">A carregar…</p></div>
       </div>
       <div class="panel">
+        <h3>Notícias lidas</h3>
+        <div id="w_news"><p class="muted">A carregar…</p></div>
+      </div>
+      <div class="panel">
         <h3>Porquê, com base nas notícias e no preço</h3>
         <div id="w_list"><p class="muted">A carregar…</p></div>
         <div id="w_patterns"></div>
@@ -498,7 +502,7 @@ async function loadWatch() {
     if (!resp.ok) return;
     const d = await resp.json();
     if (!$('view-watch').classList.contains('active')) return;
-    renderWatch(d.watchlist, d.decision, null, d.tape);
+    renderWatch(d.watchlist, d.decision, null, d.tape, d.news_sources);
   } catch (e) {
     // Mantém a última leitura se a rede falhar.
   } finally {
@@ -551,8 +555,23 @@ function renderTape(tape) {
               : '<p class="muted">Ainda sem compras nem vendas hoje.</p>'}`;
 }
 
-function renderWatch(list, decision, changes, tape) {
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"]/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+}
+
+function renderNews(list, sources) {
+  const items = (list && list.recent_headlines) || [];
+  const rows = items.slice(0, 24).map(item =>
+    `<tr><td style="text-align:left">${esc(item.title)}</td><td style="text-align:left">${esc(item.source)}</td></tr>`).join('');
+  const links = (sources || []).map(s =>
+    `<a href="${s.url}" target="_blank" rel="noopener">${s.name}</a>`).join(' · ');
+  $('w_news').innerHTML = `${rows ? `<table><thead><tr><th style="text-align:left">Título</th><th style="text-align:left">Fonte</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted">Ainda sem títulos nesta passagem. A próxima leitura horária enche esta lista.</p>'}
+    <p class="muted">Fontes: ${links}</p>`;
+}
+
+function renderWatch(list, decision, changes, tape, sources) {
   renderTape(tape);
+  renderNews(list, sources);
   const assets = (list && list.assets) || [];
   if (!decision) {
     $('w_advice').innerHTML = '<p class="muted">Ainda não há decisão. Carrega em “Ler notícias outra vez”.</p>';
@@ -613,7 +632,7 @@ $('w_run').addEventListener('click', async () => {
     if (d.error) throw new Error(d.error);
     const listResp = await fetch('/api/watch');
     const list = await listResp.json();
-    renderWatch(list.watchlist, d.decision, d.changes, list.tape);
+    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources);
   } catch (e) {
     $('w_decision').innerHTML = '<p class="err">Erro: '+e.message+'</p>';
   } finally {
