@@ -680,6 +680,12 @@ def decide(
     with (path.parent / "decision_log.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(decision, ensure_ascii=False) + "\n")
     try:
+        from .movements import record_book_decision
+
+        record_book_decision(path.parent, decision)
+    except Exception as exc:  # noqa: BLE001
+        print(f"movimentos falharam: {exc}")
+    try:
         from .history import record_equity
 
         record_equity(path.parent, capital_atual, source="decide")

@@ -286,8 +286,10 @@ def api_watch():
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
     tape = tape_mod.view(tape_mod.load_tape(watchlist_mod.state_dir()))
     from . import history as history_mod
+    from . import movements as movements_mod
 
     equity = history_mod.series_payload(watchlist_mod.state_dir())
+    movements = movements_mod.movements_payload(watchlist_mod.state_dir(), limit=30)
     return jsonify({
         "watchlist": data,
         "decision": decision,
@@ -295,7 +297,35 @@ def api_watch():
         "news_sources": watchlist_mod.news_sources(),
         "equity": equity,
         "changed": equity.get("changed"),
+        "movements": movements,
     })
+
+
+@app.route("/api/movements")
+def api_movements():
+    try:
+        from . import movements as movements_mod
+
+        limit = int(request.args.get("limit", 200))
+        offset = int(request.args.get("offset", 0))
+        origin = request.args.get("origin") or None
+        side = request.args.get("side") or None
+        if origin not in (None, "carteira", "sleeve_btc"):
+            origin = None
+        if side:
+            side = side.upper()
+            if side not in ("BUY", "SELL", "HOLD"):
+                side = None
+        payload = movements_mod.movements_payload(
+            watchlist_mod.state_dir(),
+            limit=limit,
+            offset=offset,
+            origin=origin,
+            side=side,
+        )
+        return jsonify(payload)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/tape/backtest")

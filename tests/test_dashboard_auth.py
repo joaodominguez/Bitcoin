@@ -31,7 +31,8 @@ def test_favicon_and_asset_areas(client):
     assert 'id="w_perf_chart"' in html
     assert "Desempenho da carteira" in html
     assert "Watchlist" in html
-    assert "Últimas transações" in html
+    assert "Últimas transações" in html or "Movimentos recentes" in html
+    assert "Histórico de movimentos" in html or 'data-view="movements"' in html
     assert "cdn.tailwindcss.com" in html
     assert "Ouro" in html and "Metais" in html
     assert "Petróleo" in html and "Energia" in html
