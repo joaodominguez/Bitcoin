@@ -8,6 +8,7 @@ def client(monkeypatch):
     monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
     monkeypatch.delenv("DASHBOARD_USER", raising=False)
     app.config["TESTING"] = True
+    app.config["SECRET_KEY"] = "test-secret"
     return app.test_client()
 
 
@@ -37,6 +38,10 @@ def test_favicon_and_asset_areas(client):
     assert "Ouro" in html and "Metais" in html
     assert "Petróleo" in html and "Energia" in html
     assert "Tecnologia" in html
+    assert "fetchJson" in html
+    assert 'id="app_status"' in html
+    assert "decision.day_pnl_eur ?? decision.unrealized_pnl_eur ?? 0" in html
+    assert "decision.unrealized_pnl_eur || 0" not in html
     icon = client.get("/static/favicon.png")
     assert icon.status_code == 200
     assert icon.mimetype == "image/png"
@@ -50,12 +55,44 @@ def test_portfolio_page_refreshes_itself(client):
     assert "30s" in html
 
 
-def test_password_protects_pages(monkeypatch):
+def test_password_redirects_to_login(monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "secret")
     monkeypatch.setenv("DASHBOARD_USER", "btcsim")
+    app.config["SECRET_KEY"] = "test-secret"
     client = app.test_client()
-    assert client.get("/").status_code == 401
-    assert client.get("/health").status_code == 200
-    ok = client.get("/", auth=("btcsim", "secret"))
-    assert ok.status_code == 200
-    assert client.get("/", auth=("btcsim", "wrong")).status_code == 401
+    resp = client.get("/")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+    login_page = client.get("/login")
+    assert login_page.status_code == 200
+    body = login_page.get_data(as_text=True)
+    assert "Carteira virtual" in body
+    assert 'name="password"' in body
+
+    api = client.get("/api/watch")
+    assert api.status_code == 401
+    assert api.get_json()["login"] == "/login"
+
+    bad = client.post("/login", data={"username": "btcsim", "password": "wrong"})
+    assert bad.status_code == 200
+    assert "incorretos" in bad.get_data(as_text=True)
+
+    ok = client.post(
+        "/login",
+        data={"username": "btcsim", "password": "secret"},
+        follow_redirects=False,
+    )
+    assert ok.status_code == 302
+    home = client.get("/")
+    assert home.status_code == 200
+    assert 'id="w_top_cards"' in home.get_data(as_text=True)
+
+    watch = client.get("/api/watch")
+    assert watch.status_code == 200
+
+    # Basic Auth still works without a cookie session
+    other = app.test_client()
+    basic = other.get("/", auth=("btcsim", "secret"))
+    assert basic.status_code == 200
+    assert other.get("/", auth=("btcsim", "wrong")).status_code == 302

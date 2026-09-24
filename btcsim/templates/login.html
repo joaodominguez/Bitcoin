@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Entrar — Carteira virtual</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111827;
+      --line: #1e293b;
+      --text: #e5eef7;
+      --muted: #94a3b8;
+      --brand: #2dd4bf;
+      --err: #f87171;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.12), transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, rgba(56, 189, 248, 0.08), transparent 50%),
+        var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .panel {
+      width: min(400px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 28px 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    }
+    h1 { margin: 0 0 6px; font-size: 1.25rem; font-weight: 700; }
+    p.sub { margin: 0 0 22px; color: var(--muted); font-size: 0.875rem; line-height: 1.45; }
+    label {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin: 0 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #0b1220;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font: 500 14px/1.2 "Plus Jakarta Sans", sans-serif;
+      margin-bottom: 14px;
+    }
+    input:focus {
+      outline: 2px solid rgba(45, 212, 191, 0.35);
+      border-color: var(--brand);
+    }
+    button {
+      width: 100%;
+      margin-top: 6px;
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: var(--brand);
+      color: #042f2e;
+      font: 700 14px/1.2 "Plus Jakarta Sans", sans-serif;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.05); }
+    .err {
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      color: var(--err);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.875rem;
+      margin-bottom: 14px;
+    }
+    .hint { margin-top: 16px; font-size: 0.75rem; color: var(--muted); line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <form class="panel" method="post" action="{{ url_for('login') }}" autocomplete="on">
+    <h1>Carteira virtual</h1>
+    <p class="sub">O dashboard está protegido. Entra com o utilizador e password do servidor para ver posições, movimentos e notícias.</p>
+    {% if error %}
+    <div class="err">{{ error }}</div>
+    {% endif %}
+    <label for="username">Utilizador</label>
+    <input id="username" name="username" type="text" value="{{ username or 'btcsim' }}" required autofocus />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required />
+    <button type="submit">Entrar</button>
+    <p class="hint">Credenciais em <code>.env</code> no servidor (<code>DASHBOARD_USER</code> / <code>DASHBOARD_PASSWORD</code>). Sem password configurada, o dashboard fica aberto.</p>
+  </form>
+</body>
+</html>

@@ -200,8 +200,9 @@
           Alocação
         </button>
       </nav>
-      <div class="mt-auto p-4 border-t border-slate-800 text-[11px] text-slate-500 leading-relaxed">
-        Decisão virtual · não envia ordens reais.
+      <div class="mt-auto p-4 border-t border-slate-800 text-[11px] text-slate-500 leading-relaxed space-y-2">
+        <div>Decisão virtual · não envia ordens reais.</div>
+        <a class="text-brand hover:underline" href="/logout">Sair</a>
       </div>
     </aside>
 
@@ -227,6 +228,7 @@
       </header>
 
       <main class="flex-1 p-4 sm:p-6 space-y-5">
+        <div id="app_status" class="hidden card p-3 text-sm" role="status" aria-live="polite"></div>
         <!-- WATCH -->
         <div class="view active" id="view-watch">
           <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="w_top_cards" title="Arrasta os cards para mudar a ordem">
@@ -536,8 +538,7 @@ async function run() {
   params.set('contrarian', $('contrarian').checked ? 'true':'false');
   selectedStrategies().forEach(s => params.append('strategy', s));
   try {
-    const resp = await fetch('/api/simulate?' + params.toString());
-    const data = await resp.json();
+    const data = await fetchJson('/api/simulate?' + params.toString());
     if (data.error) throw new Error(data.error);
     render(data);
   } catch (e) {
@@ -624,8 +625,7 @@ async function runAlloc() {
   p.set('rebalance_days', $('a_rebalance').value);
   p.set('fee', (parseFloat($('a_fee').value)/100).toString());
   try {
-    const resp = await fetch('/api/allocate?' + p.toString());
-    const d = await resp.json();
+    const d = await fetchJson('/api/allocate?' + p.toString());
     if (d.error) throw new Error(d.error);
     renderAlloc(d);
     if ($('a_wf').checked) { await runWalkForward(p); }
@@ -640,8 +640,7 @@ async function runAlloc() {
 async function runWalkForward(p) {
   $('a_wfPanel').style.display = 'block';
   $('a_wfKpis').innerHTML = '<span class="muted">A validar…</span>';
-  const resp = await fetch('/api/walkforward?' + p.toString());
-  const d = await resp.json();
+  const d = await fetchJson('/api/walkforward?' + p.toString());
   if (d.error) { $('a_wfKpis').innerHTML = '<p class="err">Erro: '+d.error+'</p>'; return; }
   const cur = d.currency, m = d.metrics, em = d.equal_metrics;
   $('a_wfKpis').innerHTML = `
@@ -705,16 +704,57 @@ $('a_run').addEventListener('click', runAlloc);
 const WATCH_REFRESH_MS = 30000;
 let watchLoading = false;
 
+function setAppStatus(message, kind) {
+  const el = $('app_status');
+  if (!el) return;
+  if (!message) {
+    el.className = 'hidden card p-3 text-sm';
+    el.textContent = '';
+    return;
+  }
+  const tone = kind === 'error'
+    ? 'border-rose-500/40 text-rose-300'
+    : 'border-brand/30 text-slate-300';
+  el.className = `card p-3 text-sm ${tone}`;
+  el.innerHTML = message;
+}
+
+async function fetchJson(url, options) {
+  const opts = Object.assign({ credentials: 'same-origin' }, options || {});
+  const resp = await fetch(url, opts);
+  let data = null;
+  try { data = await resp.json(); } catch (e) { data = null; }
+  if (resp.status === 401) {
+    const login = (data && data.login) || '/login';
+    setAppStatus(
+      `Sessão expirada ou autenticação necessária. <a class="underline text-brand" href="${login}">Entrar</a>`,
+      'error'
+    );
+    const err = new Error('auth');
+    err.code = 401;
+    throw err;
+  }
+  if (!resp.ok) {
+    const msg = (data && data.error) || (`HTTP ${resp.status}`);
+    throw new Error(msg);
+  }
+  return data;
+}
+
 async function loadWatch() {
   if (watchLoading) return;
   watchLoading = true;
   try {
-    const resp = await fetch('/api/watch');
-    if (!resp.ok) return;
-    const d = await resp.json();
+    const d = await fetchJson('/api/watch');
     if (!$('view-watch').classList.contains('active')) return;
+    setAppStatus('');
     renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements, d.layout, d.news_context);
   } catch (e) {
+    if (e && e.code === 401) return;
+    setAppStatus('Não foi possível carregar o mercado: ' + (e && e.message ? e.message : 'erro de rede'), 'error');
+    if ($('w_top_cards') && !$('w_top_cards').dataset.filled) {
+      $('w_top_cards').innerHTML = '<div class="card p-4 col-span-full muted text-sm">Falha ao carregar posições. Verifica a ligação ou volta a entrar.</div>';
+    }
   } finally {
     watchLoading = false;
   }
@@ -925,9 +965,11 @@ function renderTopCards(positions, patterns, layout, actions) {
     });
   }
   if (!top.length) {
+    $('w_top_cards').dataset.filled = '1';
     $('w_top_cards').innerHTML = '<div class="card p-4 col-span-full muted text-sm">Sem posições abertas — capital em cash virtual.</div>';
     return;
   }
+  $('w_top_cards').dataset.filled = '1';
   $('w_top_cards').innerHTML = top.map(p => {
     const meta = assetInfo(p.asset);
     const key = String(p.asset || '').replace(/^stock:/i, '').toLowerCase();
@@ -1015,6 +1057,7 @@ function persistCardOrder(root) {
   try { localStorage.setItem('btcsim_card_order', JSON.stringify(order)); } catch (e) {}
   fetch('/api/ui/layout', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ card_order: order }),
   }).catch(() => {});
@@ -1131,9 +1174,7 @@ async function loadMovements({ reset = false } = {}) {
     p.set('offset', String(movementsState.offset));
     if (movementsState.origin) p.set('origin', movementsState.origin);
     if (movementsState.side) p.set('side', movementsState.side);
-    const resp = await fetch('/api/movements?' + p.toString());
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const d = await resp.json();
+    const d = await fetchJson('/api/movements?' + p.toString());
     if (d.error) throw new Error(d.error);
     const batch = d.items || [];
     movementsState.items = reset ? batch : movementsState.items.concat(batch);
@@ -1210,7 +1251,7 @@ function renderWatch(list, decision, changes, tape, sources, equity, movements, 
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Inicial</div><div class="mono text-lg mt-1">${fmtCompact(inicial)} <span class="text-slate-500 text-sm">${cur}</span></div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Atual</div><div class="mono text-lg mt-1 ${cls(delta)}">${fmtCompact(atual)}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ</div><div class="mono text-lg mt-1 ${cls(delta)}">${sign(delta)} <span class="text-sm">(${sign(deltaPct)}%)</span></div></div>
-    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ hoje</div><div class="mono text-lg mt-1 ${cls(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}">${fmtCompact(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur || 0))}</div></div>
+    <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Δ hoje</div><div class="mono text-lg mt-1 ${cls(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur ?? 0))}">${fmtCompact(Number(decision.day_pnl_eur ?? decision.unrealized_pnl_eur ?? 0))}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">BTC spot</div><div class="mono text-lg mt-1">${spot}</div></div>
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Sleeve</div><div class="mono text-lg mt-1">${fmtCompact((tape && tape.cash_eur) || 0)} <span class="text-slate-500 text-sm">EUR</span></div></div>`;
 
@@ -1256,13 +1297,13 @@ $('w_run').addEventListener('click', async () => {
   const btn = $('w_run');
   btn.disabled = true; btn.textContent = 'A ler…';
   try {
-    const resp = await fetch('/api/watch/run');
-    const d = await resp.json();
+    const d = await fetchJson('/api/watch/run');
     if (d.error) throw new Error(d.error);
-    const listResp = await fetch('/api/watch');
-    const list = await listResp.json();
+    const list = await fetchJson('/api/watch');
+    setAppStatus('');
     renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements, list.layout, list.news_context);
   } catch (e) {
+    if (e && e.code === 401) return;
     $('w_decision').innerHTML = '<div class="err text-sm">Erro: '+e.message+'</div>';
   } finally {
     btn.disabled = false; btn.textContent = 'Atualizar notícias';

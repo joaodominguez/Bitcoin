@@ -97,7 +97,7 @@ Um segundo processo, `watcher`, corre **de hora a hora**: lê notícias pública
 Um terceiro processo, `tape`, olha o preço do Bitcoin **de 15 em 15 minutos**. Em vez de um preço fixo (ex. 80k), calcula patamares a partir do **máximo dos últimos 30 dias** (−8/−11/−14/−18%), compra fatias de **200 €** virtuais até **1 200 €**, e vende cada fatia só em lucro depois das taxas. Se o mercado estiver perto do topo, fica em **WAIT**. Backtest: `python -m btcsim.tape --backtest --days 180`.
 A dashboard mostra a curva do capital vs buy-and-hold **SPY** e **Bitcoin**, um resumo «desde ontem», e o separador **Movimentos** com o histórico completo (carteira + sleeve).
 
-- Define `DASHBOARD_PASSWORD` no `.env`. Sem password, qualquer pessoa que chegue à porta consegue usar a ferramenta e gastar o teu tráfego nas APIs de preços.
+- Define `DASHBOARD_PASSWORD` no `.env`. Sem password, qualquer pessoa que chegue à porta consegue usar a ferramenta e gastar o teu tráfego nas APIs de preços. Com password, o browser abre `/login` (utilizador `DASHBOARD_USER`, por omissão `btcsim`).
 - O servidor precisa de saída HTTPS (CoinGecko, Yahoo Finance e câmbio). Cerca de 512 MB de RAM chegam.
 - Para um endereço com HTTPS (ex.: `https://carteira.oteudominio.pt`), põe o Nginx ou o Caddy que já tenhas à frente da porta 8000. Não abras a porta 8000 diretamente à internet se puderes evitar.
 
