@@ -229,9 +229,10 @@
       <main class="flex-1 p-4 sm:p-6 space-y-5">
         <!-- WATCH -->
         <div class="view active" id="view-watch">
-          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="w_top_cards">
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="w_top_cards" title="Arrasta os cards para mudar a ordem">
             <div class="card p-4"><div class="muted text-sm">A carregar…</div></div>
           </div>
+          <p class="text-[11px] text-slate-500 mt-2" id="w_cards_hint">Arrasta os cards — a ordem fica memorizada.</p>
 
           <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mt-5">
             <section class="card xl:col-span-2 p-5">
@@ -711,7 +712,7 @@ async function loadWatch() {
     if (!resp.ok) return;
     const d = await resp.json();
     if (!$('view-watch').classList.contains('active')) return;
-    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements);
+    renderWatch(d.watchlist, d.decision, d.changed, d.tape, d.news_sources, d.equity, d.movements, d.layout);
   } catch (e) {
   } finally {
     watchLoading = false;
@@ -875,12 +876,21 @@ function renderPerfChart(inicial, atual, previsao, cur, equity) {
   }, {responsive: true, displayModeBar: false});
 }
 
-function renderTopCards(actions, patterns) {
+function renderTopCards(actions, patterns, layout) {
   const byName = {};
   (patterns || []).forEach(p => { byName[String(p.asset || '').toLowerCase()] = p; });
-  const top = (actions || [])
-    .filter(a => a.weight_after_pct >= 0.5 || a.action === 'SELL')
-    .slice(0, 4);
+  let top = (actions || [])
+    .filter(a => a.weight_after_pct >= 0.5 || a.action === 'SELL' || a.action === 'BUY')
+    .slice(0, 8);
+  const saved = (layout && layout.card_order) || cardOrderCache || [];
+  if (saved.length) {
+    const rank = new Map(saved.map((k, i) => [String(k).toLowerCase(), i]));
+    top = top.slice().sort((a, b) => {
+      const ia = rank.has(String(a.asset).toLowerCase()) ? rank.get(String(a.asset).toLowerCase()) : 999;
+      const ib = rank.has(String(b.asset).toLowerCase()) ? rank.get(String(b.asset).toLowerCase()) : 999;
+      return ia - ib;
+    });
+  }
   if (!top.length) {
     $('w_top_cards').innerHTML = '<div class="card p-4 col-span-full muted text-sm">Sem posições abertas.</div>';
     return;
@@ -889,17 +899,21 @@ function renderTopCards(actions, patterns) {
     const meta = assetInfo(a.asset);
     const key = String(a.asset || '').replace(/^stock:/i, '').toLowerCase();
     const pat = byName[key] || byName[String(a.asset || '').toLowerCase()];
-    const ret = pat && typeof pat.return_30d_pct === 'number' ? pat.return_30d_pct : null;
+    const ret = pat && typeof pat.return_1d_pct === 'number'
+      ? pat.return_1d_pct
+      : (pat && typeof pat.return_30d_pct === 'number' ? pat.return_30d_pct : null);
+    const retLabel = pat && typeof pat.return_1d_pct === 'number' ? '1d' : '30d';
     const pill = ret == null
       ? `<span class="pill-hold">${ACTION_PT[a.action] || a.action}</span>`
-      : `<span class="${ret >= 0 ? 'pill-up' : 'pill-down'}">${sign(ret)}%</span>`;
-    return `<div class="card p-4">
+      : `<span class="${ret >= 0 ? 'pill-up' : 'pill-down'}">${sign(ret)}% ${retLabel}</span>`;
+    const clsName = pat && pat.class ? pat.class : (meta.area_pt || '');
+    return `<div class="card p-4 cursor-grab active:cursor-grabbing select-none" draggable="true" data-asset="${esc(a.asset)}">
       <div class="flex items-start justify-between gap-2">
         <div class="flex items-center gap-3 min-w-0">
           <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="${meta.color}"></circle><text x="16" y="20.5" text-anchor="middle" font-size="${meta.mark.length>3?7:9}" font-family="Plus Jakarta Sans,sans-serif" font-weight="700" fill="#0b1220">${meta.mark}</text></svg>
           <div class="min-w-0">
             <div class="font-semibold truncate">${meta.mark}</div>
-            <div class="text-[12px] text-slate-500 truncate">${meta.label}${meta.area_pt ? ' · ' + meta.area_pt : ''}</div>
+            <div class="text-[12px] text-slate-500 truncate">${meta.label}${clsName ? ' · ' + clsName : ''}</div>
           </div>
         </div>
         ${pill}
@@ -912,6 +926,53 @@ function renderTopCards(actions, patterns) {
       <div class="wbar"><i style="width:${Math.min(100, a.weight_after_pct)}%"></i></div>
     </div>`;
   }).join('');
+  bindCardDrag($('w_top_cards'));
+}
+
+let cardOrderCache = [];
+try {
+  cardOrderCache = JSON.parse(localStorage.getItem('btcsim_card_order') || '[]') || [];
+} catch (e) { cardOrderCache = []; }
+
+let dragAsset = null;
+
+function bindCardDrag(root) {
+  if (!root) return;
+  root.querySelectorAll('[draggable=true]').forEach(card => {
+    card.addEventListener('dragstart', (ev) => {
+      dragAsset = card.getAttribute('data-asset');
+      card.classList.add('opacity-60');
+      try { ev.dataTransfer.setData('text/plain', dragAsset); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('opacity-60');
+      dragAsset = null;
+      persistCardOrder(root);
+    });
+    card.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      const over = ev.currentTarget;
+      if (!dragAsset || over.getAttribute('data-asset') === dragAsset) return;
+      const dragging = root.querySelector('[data-asset="' + dragAsset.replace(/"/g, '') + '"]');
+      if (!dragging || dragging === over) return;
+      const cards = [...root.querySelectorAll('[data-asset]')];
+      const from = cards.indexOf(dragging);
+      const to = cards.indexOf(over);
+      if (from < to) root.insertBefore(dragging, over.nextSibling);
+      else root.insertBefore(dragging, over);
+    });
+  });
+}
+
+function persistCardOrder(root) {
+  const order = [...root.querySelectorAll('[data-asset]')].map(el => el.getAttribute('data-asset'));
+  cardOrderCache = order;
+  try { localStorage.setItem('btcsim_card_order', JSON.stringify(order)); } catch (e) {}
+  fetch('/api/ui/layout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ card_order: order }),
+  }).catch(() => {});
 }
 
 function renderWatchlistSide(assets, patterns) {
@@ -1049,7 +1110,11 @@ if ($('m_more')) {
   $('m_more').addEventListener('click', () => loadMovements({ reset: false }));
 }
 
-function renderWatch(list, decision, changes, tape, sources, equity, movements) {
+function renderWatch(list, decision, changes, tape, sources, equity, movements, layout) {
+  if (layout && layout.card_order && layout.card_order.length) {
+    cardOrderCache = layout.card_order;
+    try { localStorage.setItem('btcsim_card_order', JSON.stringify(cardOrderCache)); } catch (e) {}
+  }
   renderTape(tape);
   renderNews(list, sources);
   const assets = (list && list.assets) || [];
@@ -1094,7 +1159,7 @@ function renderWatch(list, decision, changes, tape, sources, equity, movements) 
     <div class="card p-4"><div class="text-[11px] text-slate-500 uppercase tracking-wide">Sleeve</div><div class="mono text-lg mt-1">${fmtCompact((tape && tape.cash_eur) || 0)} <span class="text-slate-500 text-sm">EUR</span></div></div>`;
 
   renderPerfChart(inicial, atual, previsao, cur, equity);
-  renderTopCards(decision.actions || [], decision.patterns || []);
+  renderTopCards(decision.actions || [], decision.patterns || [], layout);
   renderWatchlistSide(assets, decision.patterns || []);
   renderTransactions(movements);
 
@@ -1140,7 +1205,7 @@ $('w_run').addEventListener('click', async () => {
     if (d.error) throw new Error(d.error);
     const listResp = await fetch('/api/watch');
     const list = await listResp.json();
-    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements);
+    renderWatch(list.watchlist, d.decision, d.changes, list.tape, list.news_sources, list.equity, list.movements, list.layout);
   } catch (e) {
     $('w_decision').innerHTML = '<div class="err text-sm">Erro: '+e.message+'</div>';
   } finally {

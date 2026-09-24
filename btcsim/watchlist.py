@@ -58,10 +58,52 @@ UNIVERSE: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
     (item["spec"], item["needles"]) for item in CATALOG
 )
 
-SEED_SPECS = ("bitcoin", "ethereum", "stock:SPY", "stock:AAPL", "stock:MSFT")
-MAX_ASSETS = 12
+SEED_SPECS = (
+    "bitcoin",
+    "ethereum",
+    "stock:SPY",
+    "stock:QQQ",
+    "stock:AAPL",
+    "stock:MSFT",
+    "stock:NVDA",
+    "stock:GLD",
+    "stock:USO",
+)
+MAX_ASSETS = 14
 ADD_THRESHOLD = 0.2
 CAUTION_THRESHOLD = -0.2
+
+# Class buckets for daily rotation (equity / ETF / commodities / tech / crypto).
+CLASS_OF = {
+    "bitcoin": "crypto",
+    "ethereum": "crypto",
+    "solana": "crypto",
+    "cardano": "crypto",
+    "dogecoin": "crypto",
+    "ripple": "crypto",
+    "binancecoin": "crypto",
+    "aapl": "tech",
+    "msft": "tech",
+    "googl": "tech",
+    "nvda": "tech",
+    "meta": "tech",
+    "amzn": "consumer",
+    "tsla": "auto",
+    "spy": "etf",
+    "qqq": "etf",
+    "gld": "commodity",
+    "slv": "commodity",
+    "uso": "commodity",
+}
+CLASS_BUDGET = {
+    "tech": 0.38,
+    "etf": 0.22,
+    "commodity": 0.18,
+    "consumer": 0.12,
+    "auto": 0.08,
+    "crypto": 0.12,  # still light; deep BTC dips stay on the sleeve
+}
+MAX_NAMES_IN_BOOK = 6
 
 
 def state_dir() -> Path:
@@ -114,7 +156,27 @@ def load(path: Path | None = None) -> dict:
         data = _empty()
         save(data, path)
         return data
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    # Keep older books current: add any missing seed specs (QQQ, commodities, …).
+    have = {a.get("spec") for a in data.get("assets") or []}
+    changed = False
+    for spec in SEED_SPECS:
+        if spec in have:
+            continue
+        if len(data.get("assets") or []) >= MAX_ASSETS:
+            break
+        data.setdefault("assets", []).append({
+            "spec": spec,
+            "added_at": _now(),
+            "reason": "universo multi-classe",
+            "headline": "",
+            "score": 0.0,
+            "caution": False,
+        })
+        changed = True
+    if changed:
+        save(data, path)
+    return data
 
 
 def save(data: dict, path: Path | None = None) -> None:
@@ -319,7 +381,7 @@ def _actions(previous: dict[str, float], target: dict[str, float], capital: floa
         delta = after - before
         if after == 0 and before == 0:
             continue
-        if abs(delta) < 0.02 and after > 0 and before > 0:
+        if abs(delta) < 0.012 and after > 0 and before > 0:
             side = "HOLD"
         elif delta > 0:
             side = "BUY"
@@ -355,6 +417,8 @@ def study_patterns(prices) -> list[dict]:
         sma_slow = indicators.sma(series, 50).iloc[-1] if len(series) >= 50 else float("nan")
         rsi_now = float(indicators.rsi(series, 14).iloc[-1])
         ret_30 = float(series.iloc[-1] / series.iloc[-30] - 1.0)
+        ret_1 = float(series.iloc[-1] / series.iloc[-2] - 1.0) if len(series) >= 2 else 0.0
+        ret_5 = float(series.iloc[-1] / series.iloc[-6] - 1.0) if len(series) >= 6 else ret_1
         window = series.iloc[-60:] if len(series) >= 60 else series
         drawdown = last / float(window.max()) - 1.0
 
@@ -397,16 +461,98 @@ def study_patterns(prices) -> list[dict]:
             stance = "esperar"
             reading = "Os sinais não apontam na mesma direção. Eu não mudava a posição por este padrão."
 
+        edge = round(
+            ret_1 * 100 * 2.2
+            + ret_5 * 100 * 1.1
+            + (8.0 if trend.startswith("alta") else -6.0)
+            + (0.0 if 40 <= rsi_now <= 65 else (-10.0 if rsi_now >= 70 else -4.0)),
+            2,
+        )
         studies.append({
             "asset": name,
             "trend": trend,
             "rsi": round(rsi_now, 1),
+            "return_1d_pct": round(ret_1 * 100, 2),
+            "return_5d_pct": round(ret_5 * 100, 2),
             "return_30d_pct": round(ret_30 * 100, 1),
             "drawdown_pct": round(drawdown * 100, 1),
+            "edge_score": edge,
             "stance": stance,
             "reading": reading,
+            "class": CLASS_OF.get(str(name).lower(), "other"),
         })
     return studies
+
+
+def _asset_class(name: str) -> str:
+    key = str(name).replace("stock:", "").lower()
+    return CLASS_OF.get(key, "other")
+
+
+def daily_rotation_weights(studies: list[dict], eligible: set[str] | list[str]) -> dict[str, float]:
+    """Pick a diversified book tilted to short-term edge (virtual daily rotation).
+
+    Prefers names with positive 1d/5d momentum, healthy RSI, and uptrend — across
+    tech, ETFs, commodities and a light crypto sleeve. Takes profit / cuts losers
+    by simply leaving weak names at weight 0.
+    """
+    allowed = {str(x).replace("stock:", "") for x in eligible}
+    # Map study asset names (often without stock: prefix) to canonical book keys.
+    ranked = []
+    for item in studies:
+        asset = str(item["asset"])
+        bare = asset.replace("stock:", "")
+        if bare not in allowed and asset not in allowed:
+            # eligible may be specs like stock:AAPL while study uses AAPL
+            if bare.lower() not in {a.replace("stock:", "").lower() for a in allowed}:
+                continue
+        if item.get("stance") == "não perseguir" and float(item.get("return_1d_pct") or 0) < 0.15:
+            continue
+        if float(item.get("edge_score") or -99) < -2.0 and not str(item.get("trend", "")).startswith("alta"):
+            continue
+        ranked.append(item)
+    ranked.sort(key=lambda x: float(x.get("edge_score") or 0), reverse=True)
+
+    picked: list[dict] = []
+    class_used: dict[str, float] = {}
+    for item in ranked:
+        cls = item.get("class") or _asset_class(item["asset"])
+        budget = CLASS_BUDGET.get(cls, 0.10)
+        used = class_used.get(cls, 0.0)
+        if used >= budget - 1e-6:
+            continue
+        if len(picked) >= MAX_NAMES_IN_BOOK:
+            break
+        # Skip clearly weak day unless gold/commodity hedge with positive edge.
+        if float(item.get("edge_score") or 0) < 0 and cls not in {"commodity", "etf"}:
+            continue
+        if float(item.get("edge_score") or 0) < 1.0 and cls == "crypto":
+            continue  # crypto only when short-term edge is clear
+        room = budget - used
+        # Slot size: stronger edge → larger slice within class budget.
+        edge = max(0.5, float(item.get("edge_score") or 0.5))
+        slot = min(room, MAX_SINGLE_WEIGHT, 0.08 + edge * 0.012)
+        if slot < 0.04:
+            continue
+        picked.append({**item, "class": cls, "slot": slot})
+        class_used[cls] = used + slot
+
+    if not picked:
+        # Defensive fallback: best ETF or cash later via risk limits.
+        etfs = [s for s in ranked if (s.get("class") or _asset_class(s["asset"])) == "etf"]
+        if etfs:
+            picked = [{**etfs[0], "slot": 0.25}]
+        else:
+            return {}
+
+    raw = {str(p["asset"]): float(p["slot"]) for p in picked}
+    # Prefer canonical names as they appear in price frame columns.
+    total = sum(raw.values())
+    max_invested = 1.0 - MIN_CASH_WEIGHT
+    if total > max_invested and total > 0:
+        scale = max_invested / total
+        raw = {k: v * scale for k, v in raw.items()}
+    return {k: round(v, 6) for k, v in raw.items() if v > 1e-6}
 
 
 def portfolio_advice(studies: list[dict], actions: list[dict], cautious: list[str]) -> str:
@@ -573,13 +719,13 @@ def decide(
     path: Path | None = None,
     capital: float = 10_000.0,
     currency: str = "eur",
-    method: str = "min_variance",
+    method: str = "daily_rotation",
     prices=None,
 ) -> dict:
     """Allocate virtual capital across the watchlist and store the decision.
 
-    Assets flagged ``caution`` by a bearish headline are left at weight 0
-    (a virtual sell) until a later bullish headline clears the flag.
+    Default ``daily_rotation`` tilts to short-term edge across tech / ETF /
+    commodities / crypto (light). Assets flagged ``caution`` stay at weight 0.
     """
     path = path or (state_dir() / "watchlist.json")
     data = load(path)
@@ -598,28 +744,49 @@ def decide(
     studies = study_patterns(frame) if frame is not None and not frame.empty else []
     weights: dict[str, float] = {}
     exp_return_pct = None
-    note = "Alocacao defensiva (minima variancia) sobre a watchlist, depois de ler os padroes."
+    note = (
+        "Rotação diária virtual: reforço o que sobe com RSI saudável "
+        "(tech, ETF, commodities; cripto leve) e corto o que perde força."
+    )
     if not eligible:
         note = "Todas as posicoes estao em cautela. Decisao: ficar em cash virtual."
     elif frame is not None:
         wanted = [_spec_name(spec) for spec in eligible]
         book = frame[[c for c in wanted if c in frame.columns]]
         names = list(book.columns)
-        if len(names) == 1:
-            weights = {names[0]: 1.0}
-        elif len(names) >= 2:
-            returns = alloc_mod.daily_returns(book)
-            result = alloc_mod.optimize(names, returns, method=method, n_samples=8_000)
-            weights = {k: float(v) for k, v in result.weights.items()}
-            exp_return_pct = result.exp_return_pct
-            note = (
-                f"Alocacao {method} depois da leitura de padroes: "
-                f"retorno esperado {result.exp_return_pct:+.1f}%, "
-                f"volatilidade {result.exp_volatility_pct:.1f}%."
-            )
+        eligible_names = set(names)
+        if method == "daily_rotation":
+            weights = daily_rotation_weights(studies, eligible_names)
+            if weights:
+                held = [s for s in studies if s["asset"] in weights]
+                if held:
+                    # Annualise a blend of 5d momentum as a rough forecast label.
+                    avg5 = sum(float(s.get("return_5d_pct") or 0) for s in held) / len(held)
+                    exp_return_pct = round(avg5 * (252 / 5), 2)
+                note = (
+                    "Rotação diária por classes (tech / ETF / commodities / cripto leve): "
+                    f"{len(weights)} posições com melhor edge de curto prazo."
+                )
+            elif len(names) == 1:
+                weights = {names[0]: 1.0}
+            elif len(names) >= 2:
+                method = "min_variance"
+        if method != "daily_rotation" and not weights:
+            if len(names) == 1:
+                weights = {names[0]: 1.0}
+            elif len(names) >= 2:
+                returns = alloc_mod.daily_returns(book)
+                result = alloc_mod.optimize(names, returns, method=method, n_samples=8_000)
+                weights = {k: float(v) for k, v in result.weights.items()}
+                exp_return_pct = result.exp_return_pct
+                note = (
+                    f"Alocacao {method} depois da leitura de padroes: "
+                    f"retorno esperado {result.exp_return_pct:+.1f}%, "
+                    f"volatilidade {result.exp_volatility_pct:.1f}%."
+                )
 
     weights = apply_risk_limits(weights)
-    if weights and note.startswith("Alocacao"):
+    if weights and ("Rotação" in note or note.startswith("Alocacao")):
         note += (
             f" Limites: max {MAX_SINGLE_WEIGHT:.0%} por ativo, "
             f"max {MAX_CRYPTO_WEIGHT:.0%} cripto, min {MIN_CASH_WEIGHT:.0%} cash."
