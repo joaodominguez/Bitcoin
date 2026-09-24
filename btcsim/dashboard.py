@@ -13,11 +13,13 @@ NOT financial advice.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from . import allocation as alloc_mod
 from . import data as data_mod
@@ -38,28 +40,100 @@ app = Flask(__name__)
 DEFAULT_STRATEGIES = ["buy_and_hold", "dca", "ma_crossover", "rsi"]
 
 
-@app.before_request
-def _optional_basic_auth():
-    """Protect the dashboard when DASHBOARD_PASSWORD is set (recommended on a server)."""
-    if request.path == "/health":
-        return None
+def _configure_secret_key() -> None:
+    """Stable secret so sessions survive gunicorn workers / restarts when password is set."""
+    explicit = os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY")
+    if explicit:
+        app.secret_key = explicit
+        return
     password = os.environ.get("DASHBOARD_PASSWORD", "")
+    material = password or "btcsim-dev-only"
+    app.secret_key = hashlib.sha256(f"btcsim:{material}".encode("utf-8")).hexdigest()
+
+
+_configure_secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+
+
+def _dashboard_credentials() -> tuple[str, str]:
+    password = os.environ.get("DASHBOARD_PASSWORD", "")
+    user = os.environ.get("DASHBOARD_USER", "btcsim")
+    return user, password
+
+
+def _credentials_ok(username: str | None, password: str | None) -> bool:
+    expected_user, expected_password = _dashboard_credentials()
+    if not expected_password:
+        return True
+    return bool(username == expected_user and password == expected_password)
+
+
+def _is_authenticated() -> bool:
+    _, password = _dashboard_credentials()
+    if not password:
+        return True
+    if session.get("dashboard_auth") is True:
+        return True
+    auth = request.authorization
+    if auth and _credentials_ok(auth.username, auth.password):
+        return True
+    return False
+
+
+@app.before_request
+def _optional_auth():
+    """Protect the dashboard when DASHBOARD_PASSWORD is set (recommended on a server)."""
+    path = request.path or "/"
+    if path == "/health" or path.startswith("/static/") or path in ("/login", "/logout"):
+        return None
+    _, password = _dashboard_credentials()
     if not password:
         return None
-    user = os.environ.get("DASHBOARD_USER", "btcsim")
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == password:
+    if _is_authenticated():
         return None
-    return Response(
-        "Autenticacao necessaria",
-        401,
-        {"WWW-Authenticate": 'Basic realm="btcsim"'},
-    )
+    if path.startswith("/api/"):
+        return jsonify({
+            "error": "Autenticação necessária. Abre /login ou envia Basic Auth.",
+            "login": "/login",
+        }), 401
+    return redirect(url_for("login", next=path))
 
 
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    _, password = _dashboard_credentials()
+    if not password:
+        return redirect(url_for("index"))
+    if _is_authenticated() and request.method == "GET":
+        return redirect(request.args.get("next") or url_for("index"))
+
+    error = None
+    username = os.environ.get("DASHBOARD_USER", "btcsim")
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        supplied = request.form.get("password") or ""
+        if _credentials_ok(username, supplied):
+            session["dashboard_auth"] = True
+            session.permanent = True
+            nxt = request.args.get("next") or url_for("index")
+            if not nxt.startswith("/"):
+                nxt = url_for("index")
+            return redirect(nxt)
+        error = "Utilizador ou password incorretos."
+    return render_template("login.html", error=error, username=username)
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 SAMPLE_NEWS = Path(__file__).resolve().parent.parent / "examples" / "sample_news.csv"
 
 
