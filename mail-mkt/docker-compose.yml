@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mailmkt
+      POSTGRES_PASSWORD: mailmkt
+      POSTGRES_DB: mailmkt
+    volumes:
+      - mailmkt-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailmkt -d mailmkt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      DASHBOARD_USER: ${DASHBOARD_USER:-mailmkt}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      DATABASE_URL: postgresql+psycopg://mailmkt:mailmkt@db:5432/mailmkt
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - mailmkt-uploads:/app/uploads
+
+volumes:
+  mailmkt-pg:
+  mailmkt-uploads:

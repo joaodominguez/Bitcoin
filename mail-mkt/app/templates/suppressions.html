@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Suppressions — mail-mkt{% endblock %}
+{% block heading %}Suppressions{% endblock %}
+{% block sub %}Emails que nunca devem receber campanhas{% endblock %}
+{% block content %}
+  <div class="panel form-card" style="margin-bottom:18px">
+    <form method="post" action="{{ url_for('main.suppressions_add') }}" class="filters">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required placeholder="exemplo@dominio.com" style="min-width:240px" />
+      </div>
+      <div>
+        <label for="reason">Motivo</label>
+        <select id="reason" name="reason">
+          <option value="manual">manual</option>
+          <option value="unsubscribe">unsubscribe</option>
+          <option value="bounce">bounce</option>
+          <option value="complaint">complaint</option>
+        </select>
+      </div>
+      <div style="align-self:flex-end"><button class="btn btn-primary" type="submit">Adicionar</button></div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>{{ total }} na lista</h2></div>
+    {% if rows %}
+    <table>
+      <thead><tr><th>Email</th><th>Motivo</th><th>Nota</th><th>Desde</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="mono">{{ r.email }}</td>
+          <td><span class="pill pill-err">{{ r.reason }}</span></td>
+          <td class="muted">{{ r.note or '—' }}</td>
+          <td class="mono muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="pager">
+      {% if page > 1 %}<a class="btn" href="{{ url_for('main.suppressions_page', page=page-1) }}">Anterior</a>{% endif %}
+      <span>Pág. {{ page }} / {{ pages }}</span>
+      {% if page < pages %}<a class="btn" href="{{ url_for('main.suppressions_page', page=page+1) }}">Seguinte</a>{% endif %}
+    </div>
+    {% else %}
+    <div class="empty">Lista vazia.</div>
+    {% endif %}
+  </div>
+{% endblock %}

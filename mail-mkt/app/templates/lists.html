@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Listas — mail-mkt{% endblock %}
+{% block heading %}Listas{% endblock %}
+{% block sub %}Grupos de contactos para campanhas futuras{% endblock %}
+{% block content %}
+  <div class="panel form-card" style="margin-bottom:18px">
+    <h2 style="margin:0 0 14px;font-size:1rem">Nova lista</h2>
+    <form method="post" action="{{ url_for('main.lists_new') }}">
+      <div class="field">
+        <label for="name">Nome</label>
+        <input id="name" name="name" required placeholder="ex.: newsletter-pt" />
+      </div>
+      <div class="field">
+        <label for="description">Descrição</label>
+        <input id="description" name="description" placeholder="opcional" />
+      </div>
+      <button class="btn btn-primary" type="submit">Criar</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>As tuas listas</h2></div>
+    {% if lists %}
+    <table>
+      <thead><tr><th>Nome</th><th>Descrição</th><th>Contactos</th><th>Criada</th><th></th></tr></thead>
+      <tbody>
+        {% for lst in lists %}
+        <tr>
+          <td>{{ lst.name }}</td>
+          <td class="muted">{{ lst.description or '—' }}</td>
+          <td class="mono">{{ counts.get(lst.id, 0) }}</td>
+          <td class="mono muted">{{ lst.created_at.strftime('%Y-%m-%d') if lst.created_at else '—' }}</td>
+          <td><a href="{{ url_for('main.contacts', list_id=lst.id) }}">Ver</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Ainda sem listas. Cria uma ou importa um CSV com nome de lista.</div>
+    {% endif %}
+  </div>
+{% endblock %}

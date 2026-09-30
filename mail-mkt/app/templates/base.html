@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}mail-mkt{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1419;
+      --bg2: #161b22;
+      --panel: #1c232d;
+      --line: #2a3340;
+      --text: #e7ecf3;
+      --muted: #8b97a8;
+      --accent: #3d9cf0;
+      --accent-dim: rgba(61, 156, 240, 0.14);
+      --ok: #3ecf8e;
+      --ok-dim: rgba(62, 207, 142, 0.12);
+      --err: #f07178;
+      --err-dim: rgba(240, 113, 120, 0.12);
+      --warn: #e6b450;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+      background:
+        radial-gradient(900px 420px at 0% -10%, rgba(61,156,240,.10), transparent 55%),
+        radial-gradient(700px 380px at 100% 0%, rgba(62,207,142,.06), transparent 50%),
+        var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .shell { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 220px; flex-shrink: 0;
+      background: var(--bg2);
+      border-right: 1px solid var(--line);
+      padding: 20px 14px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .brand {
+      font-weight: 700; font-size: 1.15rem; letter-spacing: -0.02em;
+      padding: 6px 10px 18px; color: var(--text);
+    }
+    .brand span { color: var(--accent); }
+    .nav a {
+      display: block; padding: 10px 12px; border-radius: 10px;
+      color: var(--muted); font-weight: 500; font-size: 0.92rem;
+      text-decoration: none;
+    }
+    .nav a:hover { background: rgba(255,255,255,.04); color: var(--text); }
+    .nav a.active { background: var(--accent-dim); color: var(--accent); }
+    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .top {
+      height: 60px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 22px; background: rgba(15,20,25,.75); backdrop-filter: blur(8px);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .top h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+    .top .sub { margin: 2px 0 0; font-size: 0.75rem; color: var(--muted); }
+    .content { padding: 22px; flex: 1; }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-bottom: 18px;
+    }
+    .stat {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 16px;
+    }
+    .stat .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .stat .value { font-family: "IBM Plex Mono", monospace; font-size: 1.35rem; margin-top: 4px; font-weight: 500; }
+    .panel {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 14px; overflow: hidden;
+    }
+    .panel-head {
+      padding: 14px 16px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .panel-head h2 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: 0; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; }
+    .muted { color: var(--muted); }
+    .pill {
+      display: inline-flex; align-items: center; padding: 2px 8px;
+      border-radius: 999px; font-size: 0.72rem; font-weight: 600;
+    }
+    .pill-ok { background: var(--ok-dim); color: var(--ok); }
+    .pill-err { background: var(--err-dim); color: var(--err); }
+    .pill-mute { background: rgba(139,151,168,.15); color: var(--muted); }
+    .pill-warn { background: rgba(230,180,80,.15); color: var(--warn); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--line); background: var(--bg2); color: var(--text);
+      border-radius: 10px; padding: 8px 14px; font: 600 0.85rem/1.2 "DM Sans", sans-serif;
+      cursor: pointer; text-decoration: none;
+    }
+    .btn:hover { border-color: #3d4a5c; text-decoration: none; }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #041018; }
+    .btn-primary:hover { filter: brightness(1.06); }
+    .btn-danger { color: var(--err); border-color: rgba(240,113,120,.35); }
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    input, select, textarea {
+      background: var(--bg); border: 1px solid var(--line); color: var(--text);
+      border-radius: 10px; padding: 9px 12px; font: 500 0.88rem/1.2 "DM Sans", sans-serif;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: 2px solid rgba(61,156,240,.35); border-color: var(--accent);
+    }
+    label { display: block; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+    .field { margin-bottom: 14px; }
+    .flash { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 0.9rem; }
+    .flash-ok { background: var(--ok-dim); color: var(--ok); border: 1px solid rgba(62,207,142,.3); }
+    .flash-error { background: var(--err-dim); color: var(--err); border: 1px solid rgba(240,113,120,.3); }
+    .pager { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); }
+    .empty { padding: 36px 16px; text-align: center; color: var(--muted); }
+    .form-card { max-width: 560px; padding: 20px; }
+    @media (max-width: 800px) {
+      .shell { flex-direction: column; }
+      .sidebar { width: 100%; border-right: 0; border-bottom: 1px solid var(--line); flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; }
+      .brand { padding: 6px 10px; width: 100%; }
+      .nav { display: flex; flex-wrap: wrap; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">mail-<span>mkt</span></div>
+      <nav class="nav">
+        <a href="{{ url_for('main.contacts') }}" class="{% if request.endpoint == 'main.contacts' %}active{% endif %}">Contactos</a>
+        <a href="{{ url_for('main.import_page') }}" class="{% if request.endpoint == 'main.import_page' %}active{% endif %}">Importar CSV</a>
+        <a href="{{ url_for('main.lists_page') }}" class="{% if request.endpoint == 'main.lists_page' %}active{% endif %}">Listas</a>
+        <a href="{{ url_for('main.suppressions_page') }}" class="{% if request.endpoint == 'main.suppressions_page' %}active{% endif %}">Suppressions</a>
+      </nav>
+      <div style="margin-top:auto;padding:10px;font-size:11px;color:var(--muted);line-height:1.4">
+        Fase 1 · armazém de contactos<br />
+        <a href="{{ url_for('main.logout') }}">Sair</a>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="top">
+        <div>
+          <h1>{% block heading %}Contactos{% endblock %}</h1>
+          <p class="sub">{% block sub %}Lista, pesquisa e importação{% endblock %}</p>
+        </div>
+        <div>{% block actions %}{% endblock %}</div>
+      </header>
+      <div class="content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for cat, msg in messages %}
+            <div class="flash flash-{{ cat }}">{{ msg }}</div>
+          {% endfor %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>
