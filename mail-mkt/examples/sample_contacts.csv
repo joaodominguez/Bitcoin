@@ -1,8 +1,0 @@
-email,nome,tags,origem,consent
-ana.silva@example.com,Ana Silva,cliente;pt,crm,opt-in web 2024
-bruno.costa@example.com,Bruno Costa,lead,feiras,cartão feira
-carla.mendes@example.com,Carla Mendes,cliente;vip,crm,cliente ativo
-invalid-email,,spam,test,
-dupe@example.com,Primeiro,teste,csv,ok
-dupe@example.com,Segundo,teste,csv,ok
-joao@empresa.pt,João Dominguez,interno,manual,equipa
