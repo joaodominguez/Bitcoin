@@ -2,15 +2,14 @@
 
 Pequena plataforma de **listas de email + campanhas** (fase 1: armazém de contactos).
 
-## Fase 1 (agora)
+## O que inclui
 
-- Guardar contactos em PostgreSQL (ou SQLite em local)
+- Contactos em PostgreSQL (ou SQLite em local)
 - Import CSV com streaming, dedupe e skip de suppressions
-- Listas, pesquisa, paginação
-- Suppression list + unsubscribe manual
+- Listas, pesquisa, paginação, suppression list
+- **Envio via UniOne** (campanhas + worker em lotes ≤500)
+- Link de unsubscribe assinado + webhook UniOne
 - Login opcional (`DASHBOARD_PASSWORD`)
-
-**Ainda sem envio de emails** — isso é a fase 2 (fila + SES/Resend).
 
 ## Arranque rápido (local, SQLite)
 
@@ -48,8 +47,27 @@ cd mail-mkt
 pytest -q
 ```
 
-## Próximas fases
+## UniOne
 
-2. Campanhas + worker Redis + provider SMTP/API  
-3. Webhooks bounce/complaint + métricas  
-4. DNS (SPF/DKIM/DMARC) e templates  
+1. Cria API key no painel UniOne  
+2. Verifica o domínio de envio (DKIM/SPF)  
+3. Preenche no `.env`:
+
+```bash
+UNIONE_API_KEY=...
+UNIONE_FROM_EMAIL=noreply@teu-dominio.com
+UNIONE_FROM_NAME=A tua marca
+UNIONE_BASE_URL=https://api.unione.io/en/transactional/api/v1
+PUBLIC_BASE_URL=http://91.99.167.243:8001
+```
+
+4. `docker compose up -d --build` (sobe `web` + `worker` + `db`)  
+5. Em **Campanhas**: envio de teste → depois enfileira a lista  
+
+Webhook (opcional): `PUBLIC_BASE_URL/webhooks/unione`
+
+## Próximas melhorias
+
+- Métricas open/click na UI  
+- Warm-up automático de volume  
+- Templates guardados  

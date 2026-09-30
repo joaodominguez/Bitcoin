@@ -7,22 +7,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
-from app.db import Base, SessionLocal, engine, init_db
+from app.db import SessionLocal
 from app.factory import create_app
 from app.import_csv import import_contacts, normalize_email
 from app.models import Contact, ContactList, Suppression
-
-TMP_DB = Path("/tmp/mailmkt-pytest.db")
-
-
-@pytest.fixture(autouse=True)
-def _clean_db():
-    engine.dispose()
-    Base.metadata.drop_all(bind=engine)
-    init_db()
-    yield
-    engine.dispose()
-    Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

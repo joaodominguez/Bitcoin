@@ -142,10 +142,12 @@
         <a href="{{ url_for('main.contacts') }}" class="{% if request.endpoint == 'main.contacts' %}active{% endif %}">Contactos</a>
         <a href="{{ url_for('main.import_page') }}" class="{% if request.endpoint == 'main.import_page' %}active{% endif %}">Importar CSV</a>
         <a href="{{ url_for('main.lists_page') }}" class="{% if request.endpoint == 'main.lists_page' %}active{% endif %}">Listas</a>
+        <a href="{{ url_for('main.campaigns') }}" class="{% if request.endpoint in ('main.campaigns','main.campaign_detail') %}active{% endif %}">Campanhas</a>
         <a href="{{ url_for('main.suppressions_page') }}" class="{% if request.endpoint == 'main.suppressions_page' %}active{% endif %}">Suppressions</a>
+        <a href="{{ url_for('main.settings') }}" class="{% if request.endpoint == 'main.settings' %}active{% endif %}">Settings</a>
       </nav>
       <div style="margin-top:auto;padding:10px;font-size:11px;color:var(--muted);line-height:1.4">
-        Fase 1 · armazém de contactos<br />
+        UniOne · envio em lotes<br />
         <a href="{{ url_for('main.logout') }}">Sair</a>
       </div>
     </aside>

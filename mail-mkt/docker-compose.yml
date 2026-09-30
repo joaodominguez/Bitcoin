@@ -19,16 +19,50 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8001"
+    env_file:
+      - .env
     environment:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       DASHBOARD_USER: ${DASHBOARD_USER:-mailmkt}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
       DATABASE_URL: postgresql+psycopg://mailmkt:mailmkt@db:5432/mailmkt
+      UNIONE_API_KEY: ${UNIONE_API_KEY:-}
+      UNIONE_BASE_URL: ${UNIONE_BASE_URL:-https://api.unione.io/en/transactional/api/v1}
+      UNIONE_FROM_EMAIL: ${UNIONE_FROM_EMAIL:-}
+      UNIONE_FROM_NAME: ${UNIONE_FROM_NAME:-mail-mkt}
+      UNIONE_REPLY_TO: ${UNIONE_REPLY_TO:-}
+      UNIONE_BATCH_SIZE: ${UNIONE_BATCH_SIZE:-100}
+      UNIONE_BATCH_PAUSE_SEC: ${UNIONE_BATCH_PAUSE_SEC:-1}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://91.99.167.243:8001}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - mailmkt-uploads:/app/uploads
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - .env
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      DATABASE_URL: postgresql+psycopg://mailmkt:mailmkt@db:5432/mailmkt
+      UNIONE_API_KEY: ${UNIONE_API_KEY:-}
+      UNIONE_BASE_URL: ${UNIONE_BASE_URL:-https://api.unione.io/en/transactional/api/v1}
+      UNIONE_FROM_EMAIL: ${UNIONE_FROM_EMAIL:-}
+      UNIONE_FROM_NAME: ${UNIONE_FROM_NAME:-mail-mkt}
+      UNIONE_REPLY_TO: ${UNIONE_REPLY_TO:-}
+      UNIONE_BATCH_SIZE: ${UNIONE_BATCH_SIZE:-100}
+      UNIONE_BATCH_PAUSE_SEC: ${UNIONE_BATCH_PAUSE_SEC:-1}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://91.99.167.243:8001}
+      WORKER_IDLE_SLEEP: ${WORKER_IDLE_SLEEP:-3}
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_started
 
 volumes:
   mailmkt-pg:
